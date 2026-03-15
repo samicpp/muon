@@ -1,9 +1,9 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use http::{extra::PolyHttpSocket, http1::server::Http1Socket, http2::{core::Http2Settings, server::Http2Socket, session::Http2Session}, shared::{HttpType, HttpVersion, LibError}};
+use http::{extra::PolyHttpSocket, http1::server::Http1Socket, http2::{core::Http2Settings, server::Http2Socket, session::Http2Session}, shared::{HttpMethod, HttpType, HttpVersion, LibError}};
 #[cfg(feature = "unix-sockets")]
 use tokio::net::UnixListener;
-use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::TcpListener};
+use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::TcpListener, task::JoinHandle};
 
 use crate::{arguments::Cli, handlers::{HttpHandler, debug::DebugHandler}, settings::Settings, stream::PolyStream};
 
@@ -39,130 +39,40 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
 
         match prot {
             "tcp" | "http" => {
-                match TcpListener::bind(loc).await {
-                    Err(err) => eprintln!("{err}"),
-                    Ok(listener) => {
-                        let handler = handler.clone();
-                        
-                        jhs.push(tokio::spawn(async move {
-                            loop {
-                                let Ok((stream, addr)) = listener.accept().await else { continue; };
-                                let handler = handler.clone();
-                                tokio::spawn(async move {
-                                    match handle(handler, stream.into(), addr.into(), true, true, None).await {
-                                        Ok(()) => (),
-                                        Err(err) => eprintln!("{err}"),
-                                    }
-                                });
-                            }
-                        }));
-                    }
+                if let Err(err) = start_tcp(&mut jhs, loc, handler.clone(), true, true, None).await {
+                    eprintln!("couldnt listen to {loc}");
+                    eprintln!("{err}")
                 }
             },
             "http1" => {
-                match TcpListener::bind(loc).await {
-                    Err(err) => eprintln!("{err}"),
-                    Ok(listener) => {
-                        let handler = handler.clone();
-                        
-                        jhs.push(tokio::spawn(async move {
-                            loop {
-                                let Ok((stream, addr)) = listener.accept().await else { continue; };
-                                let handler = handler.clone();
-                                tokio::spawn(async move {
-                                    match handle(handler, stream.into(), addr.into(), false, false, None).await {
-                                        Ok(()) => (),
-                                        Err(err) => eprintln!("{err}"),
-                                    }
-                                });
-                            }
-                        }));
-                    }
+                if let Err(err) = start_tcp(&mut jhs, loc, handler.clone(), false, false, None).await {
+                    eprintln!("couldnt listen to {loc}");
+                    eprintln!("{err}")
                 }
             },
             "http1.1" => {
-                match TcpListener::bind(loc).await {
-                    Err(err) => eprintln!("{err}"),
-                    Ok(listener) => {
-                        let handler = handler.clone();
-                        
-                        jhs.push(tokio::spawn(async move {
-                            loop {
-                                let Ok((stream, addr)) = listener.accept().await else { continue; };
-                                let handler = handler.clone();
-                                tokio::spawn(async move {
-                                    match handle(handler, stream.into(), addr.into(), false, false, Some(HttpVersion::Http11)).await {
-                                        Ok(()) => (),
-                                        Err(err) => eprintln!("{err}"),
-                                    }
-                                });
-                            }
-                        }));
-                    }
+                if let Err(err) = start_tcp(&mut jhs, loc, handler.clone(), false, false, Some(HttpVersion::Http11)).await {
+                    eprintln!("couldnt listen to {loc}");
+                    eprintln!("{err}")
                 }
             },
             "http1.0" => {
-                match TcpListener::bind(loc).await {
-                    Err(err) => eprintln!("{err}"),
-                    Ok(listener) => {
-                        let handler = handler.clone();
-                        
-                        jhs.push(tokio::spawn(async move {
-                            loop {
-                                let Ok((stream, addr)) = listener.accept().await else { continue; };
-                                let handler = handler.clone();
-                                tokio::spawn(async move {
-                                    match handle(handler, stream.into(), addr.into(), false, false, Some(HttpVersion::Http10)).await {
-                                        Ok(()) => (),
-                                        Err(err) => eprintln!("{err}"),
-                                    }
-                                });
-                            }
-                        }));
-                    }
+                if let Err(err) = start_tcp(&mut jhs, loc, handler.clone(), false, false, Some(HttpVersion::Http10)).await {
+                    eprintln!("couldnt listen to {loc}");
+                    eprintln!("{err}")
                 }
             },
             "http0.9" => {
-                match TcpListener::bind(loc).await {
-                    Err(err) => eprintln!("{err}"),
-                    Ok(listener) => {
-                        let handler = handler.clone();
-                        
-                        jhs.push(tokio::spawn(async move {
-                            loop {
-                                let Ok((stream, addr)) = listener.accept().await else { continue; };
-                                let handler = handler.clone();
-                                tokio::spawn(async move {
-                                    match handle(handler, stream.into(), addr.into(), false, false, Some(HttpVersion::Http09)).await {
-                                        Ok(()) => (),
-                                        Err(err) => eprintln!("{err}"),
-                                    }
-                                });
-                            }
-                        }));
-                    }
+                if let Err(err) = start_tcp(&mut jhs, loc, handler.clone(), false, false, Some(HttpVersion::Http09)).await {
+                    eprintln!("couldnt listen to {loc}");
+                    eprintln!("{err}")
                 }
             },
 
             "http2" => {
-                match TcpListener::bind(loc).await {
-                    Err(err) => eprintln!("{err}"),
-                    Ok(listener) => {
-                        let handler = handler.clone();
-                        // servers.push(Server::TcpH2(server.clone()));
-                        jhs.push(tokio::spawn(async move {
-                            loop {
-                                let Ok((stream, addr)) = listener.accept().await else { continue; };
-                                let handler = handler.clone();
-                                tokio::spawn(async move {
-                                    match handle(handler, stream.into(), addr.into(), false, false, Some(HttpVersion::Http2)).await {
-                                        Ok(()) => (),
-                                        Err(err) => eprintln!("{err}"),
-                                    }
-                                });
-                            }
-                        }));
-                    }
+                if let Err(err) = start_tcp(&mut jhs, loc, handler.clone(), false, false, Some(HttpVersion::Http2)).await {
+                    eprintln!("couldnt listen to {loc}");
+                    eprintln!("{err}")
                 }
             },
 
@@ -172,20 +82,8 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
                     Err(err) => eprintln!("{err}"),
                     Ok(listener) => {
                         // servers.push(Server::TcpH2(server.clone()));
-                        let hand = handler.clone();
-                        jhs.push(tokio::spawn(async move {
-                            loop {
-                                let Ok((stream, addr)) = listener.accept().await else { continue; };
-                                let hand = hand.clone();
-
-                                tokio::spawn(async move {
-                                    match handle(hand, stream.into(), addr.into(), true, false, None).await {
-                                        Ok(()) => (),
-                                        Err(err) => eprintln!("{err}"),
-                                    }
-                                });
-                            }
-                        }));
+                        let handler = handler.clone();
+                        jhs.push(tokio::spawn(serve(listener, handler, true, true, None)));
                     }
                 }
             }
@@ -220,6 +118,43 @@ impl From<tokio::net::unix::SocketAddr> for GenAddr {
     }
 }
 
+pub trait Listener {
+    async fn accept(&self) -> std::io::Result<(PolyStream, GenAddr)>;
+}
+impl Listener for TcpListener {
+    async fn accept(&self) -> std::io::Result<(PolyStream, GenAddr)> {
+        let (stream, addr) = self.accept().await?;
+        Ok((stream.into(), addr.into()))
+    }
+}
+impl Listener for UnixListener {
+    async fn accept(&self) -> std::io::Result<(PolyStream, GenAddr)> {
+        let (stream, addr) = self.accept().await?;
+        Ok((stream.into(), addr.into()))
+    }
+}
+
+pub async fn start_tcp<A: tokio::net::ToSocketAddrs>(jhs: &mut Vec<JoinHandle<()>>, addr: A, handler: Arc<dyn HttpHandler + Send + Sync + 'static>, allow_h2c: bool, allow_prior_knowledge: bool, /*peek: bool,*/ assume: Option<HttpVersion>) -> std::io::Result<()> {
+    let listener = TcpListener::bind(addr).await?;
+    
+    jhs.push(tokio::spawn(serve(listener, handler, allow_h2c, allow_prior_knowledge, /*peek,*/ assume)));
+    
+    Ok(())
+}
+pub async fn serve<L: Listener>(listener: L, handler: Arc<dyn HttpHandler + Send + Sync + 'static>, allow_h2c: bool, allow_prior_knowledge: bool, /*peek: bool,*/ assume: Option<HttpVersion>) {
+    loop {
+        let Ok((stream, addr)) = listener.accept().await else { continue; };
+        let handler = handler.clone();
+
+        let assume = assume.clone();
+        tokio::spawn(async move {
+            match handle(handler, stream.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
+                Ok(()) => (),
+                Err(err) => eprintln!("{err}"),
+            }
+        });
+    }
+}
 
 pub async fn handle(
     handler: Arc<dyn HttpHandler + Send + Sync + 'static>, 
@@ -228,11 +163,19 @@ pub async fn handle(
     addr: GenAddr,
 
     allow_h2c: bool,
+    allow_prior_knowledge: bool,
 
-    peek: bool,
+    // peek: bool,
     assume: Option<HttpVersion>,
 ) -> Result<(), LibError> {
     dbg!(&addr);
+    
+    let mut peek = [0; 24];
+
+    match &mut stream {
+        PolyStream::Tcp(tcp) => tcp.peek(&mut peek).await?,
+        _ => unreachable!(),
+    };
 
     if let Some(assumed) = &assume {
         match assumed.associated_type() {
@@ -252,33 +195,28 @@ pub async fn handle(
             }
         }
     }
-    else if peek && stream.is_tcp() {
-        let mut peek = [0; 24];
-        
-        match &mut stream {
-            PolyStream::Tcp(tcp) => tcp.peek(&mut peek).await?,
-            _ => unreachable!(),
-        };
-
-        if peek == http::http2::PREFACE {
-            let h2 = Arc::new(Http2Session::new_buf_server(PolyStream::from(stream), 8 * 1024));
-            h2.read_preface().await?;
-            h2.send_settings(H2SETTINGS).await?;
-            h2_loop(handler, h2).await?;
-        }
-        else {
-            let mut http1 = Http1Socket::new(stream, 8 * 1024);
-            http1.read_until_head_complete().await?;
-
-            if allow_h2c { possible_h2c(handler, http1, None).await?; }
-            else { handler.entry(http1.into()).await?; }
-        }
+    else if allow_prior_knowledge && peek == http::http2::PREFACE {        
+        let h2 = Arc::new(Http2Session::new_buf_server(PolyStream::from(stream), 8 * 1024));
+        h2.read_preface().await?;
+        h2.send_settings(H2SETTINGS).await?;
+        h2_loop(handler, h2).await?;
     }
     else {
         let mut http1 = Http1Socket::new(stream, 8 * 1024);
-        http1.read_until_head_complete().await?;
+        let client = http1.read_until_head_complete().await?;
 
-        if allow_h2c { possible_h2c(handler, http1, None).await?; }
+        if allow_prior_knowledge && 
+            client.method == HttpMethod::Unknown(Some("PRI".to_owned())) && 
+            client.path == "*" && 
+            client.version == HttpVersion::Unknown(Some("HTTP/2.0".to_owned())) && 
+            client.headers.len() == 0 
+        {
+            let http2 = Arc::new(http1.http2_prior_knowledge().await?);
+            http2.send_settings(H2SETTINGS).await?;
+            h2_loop(handler, http2).await?;
+        }
+
+        else if allow_h2c { possible_h2c(handler, http1, None).await?; }
         else { handler.entry(http1.into()).await?; }
     }
 
