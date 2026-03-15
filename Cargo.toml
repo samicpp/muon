@@ -15,3 +15,8 @@ dashmap = "*"
 rustls = { version = "=0.23.37", default-features = false, features = ["aws-lc-rs"] } # TODO: allow selecting ring or aws
 tokio-rustls = "=0.26.4"
 
+async-trait = "0.1.89"
+
+[features]
+default = ["unix-sockets"]
+unix-sockets = []

@@ -3,16 +3,19 @@ mod settings;
 mod ssltls;
 mod handlers;
 mod servers;
+mod stream;
 
 use std::{path::PathBuf, sync::{Arc, OnceLock}, time::Duration};
 
 use clap::Parser;
+use http::extra::PolyHttpSocket;
+use tokio::io::{ReadHalf, WriteHalf};
 
-use crate::{arguments::Cli, servers::start_servers, settings::Settings};
+use crate::{arguments::Cli, servers::start_servers, settings::Settings, stream::PolyStream};
 
 
 pub static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-
+pub type DynHttpSocket = PolyHttpSocket<ReadHalf<PolyStream>, WriteHalf<PolyStream>>;
 
 fn main() {
     let args = Cli::parse();

@@ -1,8 +1,6 @@
-use std::{ffi::c_void, pin::Pin, sync::{Arc, LazyLock}};
+use std::pin::Pin;
 
-use http::shared::{LibError, Stream};
-use httprs_core::ffi::{futures::FfiFuture, own::spawn_task};
-use rustls::crypto::CryptoProvider;
+use http::shared::Stream;
 #[cfg(feature = "unix-sockets")]
 use tokio::net::UnixStream;
 use tokio::{io::{AsyncRead, AsyncWrite, DuplexStream}, net::TcpStream};
@@ -10,7 +8,7 @@ use tokio_rustls::TlsStream;
 
 
 #[derive(Debug)]
-pub enum DynStream {
+pub enum PolyStream {
     Duplex(DuplexStream),
     TlsDuplex(TlsStream<DuplexStream>),
     Tcp(TcpStream),
@@ -20,7 +18,7 @@ pub enum DynStream {
     #[cfg(feature = "unix-sockets")]
     UnixTls(TlsStream<UnixStream>),
 }
-impl DynStream{
+impl PolyStream{
     pub fn to_stream(self) -> Box<dyn Stream>{
         match self{
             Self::Tcp(tcp) => Box::new(tcp),
@@ -61,47 +59,71 @@ impl DynStream{
         else { false }
     }
 }
-impl From<TcpStream> for DynStream{
+impl From<TcpStream> for PolyStream{
     fn from(value: TcpStream) -> Self {
         Self::Tcp(value)
     }
 }
-impl From<TlsStream<TcpStream>> for DynStream{
+impl From<TlsStream<TcpStream>> for PolyStream{
     fn from(value: TlsStream<TcpStream>) -> Self {
         Self::TcpTls(value)
     }
 }
-impl From<tokio_rustls::client::TlsStream<TcpStream>> for DynStream{
+impl From<tokio_rustls::client::TlsStream<TcpStream>> for PolyStream{
     fn from(value: tokio_rustls::client::TlsStream<TcpStream>) -> Self {
         Self::TcpTls(TlsStream::Client(value))
     }
 }
-impl From<tokio_rustls::server::TlsStream<TcpStream>> for DynStream{
+impl From<tokio_rustls::server::TlsStream<TcpStream>> for PolyStream{
     fn from(value: tokio_rustls::server::TlsStream<TcpStream>) -> Self {
         Self::TcpTls(TlsStream::Server(value))
     }
 }
-impl From<DuplexStream> for DynStream{
+impl From<DuplexStream> for PolyStream{
     fn from(value: DuplexStream) -> Self {
         Self::Duplex(value)
     }
 }
-impl From<TlsStream<DuplexStream>> for DynStream{
+impl From<TlsStream<DuplexStream>> for PolyStream{
     fn from(value: TlsStream<DuplexStream>) -> Self {
         Self::TlsDuplex(value)
     }
 }
-impl From<tokio_rustls::client::TlsStream<DuplexStream>> for DynStream{
+impl From<tokio_rustls::client::TlsStream<DuplexStream>> for PolyStream{
     fn from(value: tokio_rustls::client::TlsStream<DuplexStream>) -> Self {
         Self::TlsDuplex(TlsStream::Client(value))
     }
 }
-impl From<tokio_rustls::server::TlsStream<DuplexStream>> for DynStream{
+impl From<tokio_rustls::server::TlsStream<DuplexStream>> for PolyStream{
     fn from(value: tokio_rustls::server::TlsStream<DuplexStream>) -> Self {
         Self::TlsDuplex(TlsStream::Server(value))
     }
 }
-impl AsyncRead for DynStream {
+#[cfg(feature = "unix-sockets")]
+impl From<UnixStream> for PolyStream {
+    fn from(value: UnixStream) -> Self {
+        Self::Unix(value)
+    }
+}
+#[cfg(feature = "unix-sockets")]
+impl From<TlsStream<UnixStream>> for PolyStream{
+    fn from(value: TlsStream<UnixStream>) -> Self {
+        Self::UnixTls(value)
+    }
+}
+#[cfg(feature = "unix-sockets")]
+impl From<tokio_rustls::client::TlsStream<UnixStream>> for PolyStream{
+    fn from(value: tokio_rustls::client::TlsStream<UnixStream>) -> Self {
+        Self::UnixTls(TlsStream::Client(value))
+    }
+}
+#[cfg(feature = "unix-sockets")]
+impl From<tokio_rustls::server::TlsStream<UnixStream>> for PolyStream{
+    fn from(value: tokio_rustls::server::TlsStream<UnixStream>) -> Self {
+        Self::UnixTls(TlsStream::Server(value))
+    }
+}
+impl AsyncRead for PolyStream {
     fn poll_read(
             self: std::pin::Pin<&mut Self>,
             cx: &mut std::task::Context<'_>,
@@ -121,7 +143,7 @@ impl AsyncRead for DynStream {
         }
     }
 }
-impl AsyncWrite for DynStream {
+impl AsyncWrite for PolyStream {
     fn poll_flush(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
         unsafe {
             match self.get_unchecked_mut() {
