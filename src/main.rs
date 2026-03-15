@@ -5,16 +5,18 @@ mod handlers;
 mod servers;
 mod stream;
 
-use std::{path::PathBuf, sync::{Arc, OnceLock}, time::Duration};
+use std::{path::PathBuf, sync::{Arc, LazyLock, OnceLock}, time::Duration};
 
 use clap::Parser;
 use http::extra::PolyHttpSocket;
+use rustls::crypto::CryptoProvider;
 use tokio::io::{ReadHalf, WriteHalf};
 
 use crate::{arguments::Cli, servers::start_servers, settings::Settings, stream::PolyStream};
 
-
+pub static PROVIDER: LazyLock<Arc<CryptoProvider>> = LazyLock::new(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
 pub static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
 pub type DynHttpSocket = PolyHttpSocket<ReadHalf<PolyStream>, WriteHalf<PolyStream>>;
 
 fn main() {

@@ -27,12 +27,12 @@ impl<T> OneOrMany<T> {
             Self::Many(v) => v,
         }
     }
-    pub fn convert(self) -> Vec<T> {
-        match self {
-            Self::One(t) => vec![t],
-            Self::Many(v) => v,
-        }
-    }
+    // pub fn convert(self) -> Vec<T> {
+    //     match self {
+    //         Self::One(t) => vec![t],
+    //         Self::Many(v) => v,
+    //     }
+    // }
 }
 
 #[derive(Debug, Deserialize, Default)]

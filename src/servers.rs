@@ -1,11 +1,13 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use http::{extra::PolyHttpSocket, http1::server::Http1Socket, http2::{core::Http2Settings, server::Http2Socket, session::Http2Session}, shared::{HttpMethod, HttpType, HttpVersion, LibError}};
+use rustls::{pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject}, sign::CertifiedKey};
 #[cfg(feature = "unix-sockets")]
 use tokio::net::UnixListener;
 use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::TcpListener, task::JoinHandle};
+use tokio_rustls::TlsAcceptor;
 
-use crate::{arguments::Cli, handlers::{HttpHandler, debug::DebugHandler}, settings::Settings, stream::PolyStream};
+use crate::{PROVIDER, arguments::Cli, handlers::{HttpHandler, debug::DebugHandler}, settings::Settings, ssltls::TlsCertSelector, stream::PolyStream};
 
 
 pub static H2SETTINGS: Http2Settings = Http2Settings::default_no_push();
@@ -27,6 +29,41 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
 
     // let mut servers = Vec::with_capacity(addresses.len());
     let mut jhs = Vec::with_capacity(addresses.len());
+
+    let mut sni_builder = TlsCertSelector::new();
+    if 
+        let Some(cert_path) = &settings.network.default_cert && 
+        let Some(key_path) = &settings.network.default_key &&
+        let Ok(cert) = tokio::fs::read(cert_path).await &&
+        let Ok(key) = tokio::fs::read(key_path).await &&
+        let Ok(certs) = CertificateDer::pem_reader_iter(cert.as_slice()).map(|c| c.and_then(|c| Ok(c.into_owned()))).collect() &&
+        let Ok(key) = PrivateKeyDer::from_pem_reader(key.as_slice()) &&
+        let Ok(cert) = CertifiedKey::from_der(certs, key, &PROVIDER)
+    {
+        sni_builder.default = Some(Arc::new(cert));
+    }
+
+    for sni in &settings.network.sni {
+        if 
+            let Ok(cert) = tokio::fs::read(&sni.cert).await &&
+            let Ok(key) = tokio::fs::read(&sni.key).await &&
+            let Ok(certs) = CertificateDer::pem_reader_iter(cert.as_slice()).map(|c| c.and_then(|c| Ok(c.into_owned()))).collect() &&
+            let Ok(key) = PrivateKeyDer::from_pem_reader(key.as_slice()) &&
+            let Ok(cert) = CertifiedKey::from_der(certs, key, &PROVIDER)
+        {
+            sni_builder.add_cert(sni.domain.clone(), cert);
+        }
+    }
+
+    let mut tls_config = sni_builder.to_server_conf();
+    
+    if let Some(alpn) = &settings.network.alpn {
+        let converted = alpn.get().iter().map(|alpn| alpn.as_bytes().to_vec()).collect();
+        tls_config.alpn_protocols = converted;
+    }
+
+    let tls_acceptor = Arc::new(TlsAcceptor::from(Arc::new(tls_config)));
+    
 
     for addr in addresses {
         let mut pl = addr.splitn(2, "://");
@@ -71,6 +108,13 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
 
             "http2" => {
                 if let Err(err) = start_tcp(&mut jhs, loc, handler.clone(), false, false, Some(HttpVersion::Http2)).await {
+                    eprintln!("couldnt listen to {loc}");
+                    eprintln!("{err}")
+                }
+            },
+
+            "https" => {
+                if let Err(err) = start_tls(&mut jhs, loc, tls_acceptor.clone(), handler.clone(), true, false, None).await {
                     eprintln!("couldnt listen to {loc}");
                     eprintln!("{err}")
                 }
@@ -134,8 +178,29 @@ impl Listener for UnixListener {
     }
 }
 
+pub struct TlsListener {
+    listener: TcpListener,
+    acceptor: Arc<TlsAcceptor>,
+}
+impl Listener for TlsListener {
+    async fn accept(&self) -> std::io::Result<(PolyStream, GenAddr)> {
+        let (tcp, addr) = self.listener.accept().await?;
+        let tls = self.acceptor.accept(tcp).await?;
+        Ok((tls.into(), addr.into()))
+    }
+}
+
+
 pub async fn start_tcp<A: tokio::net::ToSocketAddrs>(jhs: &mut Vec<JoinHandle<()>>, addr: A, handler: Arc<dyn HttpHandler + Send + Sync + 'static>, allow_h2c: bool, allow_prior_knowledge: bool, /*peek: bool,*/ assume: Option<HttpVersion>) -> std::io::Result<()> {
     let listener = TcpListener::bind(addr).await?;
+    
+    jhs.push(tokio::spawn(serve(listener, handler, allow_h2c, allow_prior_knowledge, /*peek,*/ assume)));
+    
+    Ok(())
+}
+pub async fn start_tls<A: tokio::net::ToSocketAddrs>(jhs: &mut Vec<JoinHandle<()>>, addr: A, acceptor: Arc<TlsAcceptor>, handler: Arc<dyn HttpHandler + Send + Sync + 'static>, allow_h2c: bool, allow_prior_knowledge: bool, /*peek: bool,*/ assume: Option<HttpVersion>) -> std::io::Result<()> {
+    let listener = TcpListener::bind(addr).await?;
+    let listener = TlsListener { listener, acceptor };
     
     jhs.push(tokio::spawn(serve(listener, handler, allow_h2c, allow_prior_knowledge, /*peek,*/ assume)));
     
@@ -153,6 +218,19 @@ pub async fn serve<L: Listener>(listener: L, handler: Arc<dyn HttpHandler + Send
                 Err(err) => eprintln!("{err}"),
             }
         });
+    }
+}
+
+fn alpn_match(alpn: &[u8]) -> Option<HttpVersion> {
+    #[cfg(debug_assertions)] println!("matching alpn {}", String::from_utf8_lossy(alpn));
+
+    match alpn {
+        b"h2" => Some(HttpVersion::Http2),
+        b"http/1.1" => Some(HttpVersion::Http11),
+        // b"http/1.0" => Some(HttpVersion::Http10), // unofficial
+        // b"http/0.9" => Some(HttpVersion::Http09), // unofficial
+
+        _ => None,
     }
 }
 
@@ -174,7 +252,24 @@ pub async fn handle(
 
     match &mut stream {
         PolyStream::Tcp(tcp) => tcp.peek(&mut peek).await?,
-        _ => unreachable!(),
+        _ => 0,
+    };
+
+    let assume =
+    match &stream {
+        PolyStream::TlsDuplex(tls) => {
+            let (_, info) = tls.get_ref();
+            alpn_match(info.alpn_protocol().unwrap_or(&[]))
+        },
+        PolyStream::TcpTls(tls) => {
+            let (_, info) = tls.get_ref();
+            alpn_match(info.alpn_protocol().unwrap_or(&[]))
+        },
+        PolyStream::UnixTls(tls) => {
+            let (_, info) = tls.get_ref();
+            alpn_match(info.alpn_protocol().unwrap_or(&[]))
+        },
+        _ => assume,
     };
 
     if let Some(assumed) = &assume {
