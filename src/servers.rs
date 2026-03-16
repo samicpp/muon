@@ -7,7 +7,7 @@ use tokio::net::UnixListener;
 use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::TcpListener, task::JoinHandle};
 use tokio_rustls::TlsAcceptor;
 
-use crate::{PROVIDER, arguments::Cli, handlers::{HttpHandler, debug::DebugHandler}, settings::Settings, ssltls::TlsCertSelector, stream::PolyStream};
+use crate::{PROVIDER, arguments::Cli, handlers::{HttpHandler, debug::DebugHandler, simple::SimpleHandler}, settings::Settings, ssltls::TlsCertSelector, stream::PolyStream};
 
 
 pub static H2SETTINGS: Http2Settings = Http2Settings::default_no_push();
@@ -20,6 +20,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
     match settings.content.handler.as_str() {
         #[cfg(debug_assertions)]
         "debug" => Arc::new(DebugHandler),
+        "simple" => Arc::new(SimpleHandler { _args: args.clone(), settings: settings.clone() }),
 
         _ => {
             eprintln!("no handler named {} available", settings.content.handler.as_str());
@@ -279,13 +280,13 @@ pub async fn handle(
                 let http2 = Arc::new(Http2Session::new_buf_server(stream, 8 * 1024));
                 http2.read_preface().await?; // TODO: send protocol violation if false
                 http2.send_settings(H2SETTINGS).await?;
-                h2_loop(handler, http2).await?;
+                h2_loop(handler, http2, addr).await?;
             },
             _ => {
                 let http1 = Http1Socket::new(stream, 8 * 1024);
-                if allow_h2c { possible_h2c(handler, http1, assume).await?; }
+                if allow_h2c { possible_h2c(handler, http1, addr, assume).await?; }
                 else {
-                    handler.entry(http1.into()).await?;
+                    handler.entry(http1.into(), addr).await?;
                 }
             }
         }
@@ -294,7 +295,7 @@ pub async fn handle(
         let h2 = Arc::new(Http2Session::new_buf_server(PolyStream::from(stream), 8 * 1024));
         h2.read_preface().await?;
         h2.send_settings(H2SETTINGS).await?;
-        h2_loop(handler, h2).await?;
+        h2_loop(handler, h2, addr).await?;
     }
     else {
         let mut http1 = Http1Socket::new(stream, 8 * 1024);
@@ -308,24 +309,25 @@ pub async fn handle(
         {
             let http2 = Arc::new(http1.http2_prior_knowledge().await?);
             http2.send_settings(H2SETTINGS).await?;
-            h2_loop(handler, http2).await?;
+            h2_loop(handler, http2, addr).await?;
         }
 
-        else if allow_h2c { possible_h2c(handler, http1, None).await?; }
-        else { handler.entry(http1.into()).await?; }
+        else if allow_h2c { possible_h2c(handler, http1, addr, None).await?; }
+        else { handler.entry(http1.into(), addr).await?; }
     }
 
     Ok(())
 }
 
-pub async fn h2_loop(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, h2: Arc<Http2Session<BufReader<ReadHalf<PolyStream>>, WriteHalf<PolyStream>>>) -> Result<(), LibError> {
+pub async fn h2_loop(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, h2: Arc<Http2Session<BufReader<ReadHalf<PolyStream>>, WriteHalf<PolyStream>>>, addr: GenAddr) -> Result<(), LibError> {
     loop {
         if let Some(id) = h2.next().await? { // TODO: properly handle the error so a protocol violation can be sent
             let http = PolyHttpSocket::Http2(Http2Socket::new(id, h2.clone())?);
             let hand = handler.clone();
+            let addr = addr.clone();
 
             tokio::spawn(async move {
-                match hand.entry(http).await {
+                match hand.entry(http, addr).await {
                     Ok(()) => (),
                     Err(err) => eprintln!("{err}"),
                 }
@@ -338,7 +340,7 @@ pub async fn h2_loop(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, h2: 
 
     Ok(())
 }
-pub async fn possible_h2c(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, mut http1: Http1Socket<ReadHalf<PolyStream>, WriteHalf<PolyStream>>, verover: Option<HttpVersion>) -> Result<(), LibError> {
+pub async fn possible_h2c(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, mut http1: Http1Socket<ReadHalf<PolyStream>, WriteHalf<PolyStream>>, addr: GenAddr, verover: Option<HttpVersion>) -> Result<(), LibError> {
     let client = http1.read_until_head_complete().await?;
     
     if 
@@ -351,19 +353,20 @@ pub async fn possible_h2c(handler: Arc<dyn HttpHandler + Send + Sync + 'static>,
 
         let http = PolyHttpSocket::Http2(Http2Socket::new(1, h2c.clone()).unwrap());
         let hand = handler.clone();
+        let adr = addr.clone();
 
         tokio::spawn(async move {
-            match hand.entry(http).await {
+            match hand.entry(http, adr).await {
                 Ok(()) => (),
                 Err(err) => eprintln!("{err}"),
             }
         });
 
-        h2_loop(handler, h2c).await?;
+        h2_loop(handler, h2c, addr).await?;
     }
     else {
         http1.version_override = verover;
-        handler.entry(http1.into()).await?;
+        handler.entry(http1.into(), addr).await?;
     }
 
     Ok(())

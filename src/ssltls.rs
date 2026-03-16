@@ -16,7 +16,7 @@ impl TlsCertSelector{
             sni_match: DashMap::new(),
         }
     }
-    pub fn with_default(default: CertifiedKey) -> Self{
+    pub fn _with_default(default: CertifiedKey) -> Self{
         Self {
             default: Some(Arc::new(default)),
             sni_match: DashMap::new(),

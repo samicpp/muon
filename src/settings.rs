@@ -27,12 +27,12 @@ impl<T> OneOrMany<T> {
             Self::Many(v) => v,
         }
     }
-    // pub fn convert(self) -> Vec<T> {
-    //     match self {
-    //         Self::One(t) => vec![t],
-    //         Self::Many(v) => v,
-    //     }
-    // }
+    pub fn _convert(self) -> Vec<T> {
+        match self {
+            Self::One(t) => vec![t],
+            Self::Many(v) => v,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -70,10 +70,14 @@ pub struct EnvironmentSettings {
     pub thread_stack_size: Option<usize>,
 }
 
+#[inline] fn def_serve_dir() -> String { "./".into() }
+
 #[derive(Debug, Deserialize, Default)]
 pub struct ContentSettings {
     pub handler: String,
     pub max_file_size: Option<usize>,
+    #[serde(default = "def_serve_dir")]
+    pub serve_dir: String,
 }
 
 // #[derive(Debug, Deserialize, Default)]
