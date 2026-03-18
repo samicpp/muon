@@ -1,13 +1,13 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use http::{extra::PolyHttpSocket, http1::server::Http1Socket, http2::{core::Http2Settings, server::Http2Socket, session::Http2Session}, shared::{HttpMethod, HttpType, HttpVersion, LibError}};
+use http::{extra::PolyHttpSocket, ffihttp::{DynStream, PROVIDER, servers::TlsCertSelector}, http1::server::Http1Socket, http2::{core::Http2Settings, server::Http2Socket, session::Http2Session}, shared::{HttpMethod, HttpType, HttpVersion, LibError}};
 use rustls::{pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject}, sign::CertifiedKey};
 #[cfg(feature = "unix-sockets")]
 use tokio::net::UnixListener;
-use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::TcpListener, task::JoinHandle};
+use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::{TcpListener, TcpStream}, task::JoinHandle};
 use tokio_rustls::TlsAcceptor;
 
-use crate::{PROVIDER, arguments::Cli, handlers::{HttpHandler, debug::DebugHandler, simple::SimpleHandler}, settings::Settings, ssltls::TlsCertSelector, stream::PolyStream};
+use crate::{arguments::Cli, handlers::{HttpHandler, debug::DebugHandler, simple::SimpleHandler}, settings::Settings};
 
 
 pub static H2SETTINGS: Http2Settings = Http2Settings::default_no_push();
@@ -16,14 +16,16 @@ pub static H2SETTINGS: Http2Settings = Http2Settings::default_no_push();
 pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
     let addresses = args.addresses.as_ref().map(|v| v.as_slice()).unwrap_or(&[]).iter().chain(settings.network.address.get().iter()).collect::<Vec<&String>>();
 
+    let handler = settings.content.handler.as_deref().or(args.handler.as_deref()).unwrap_or("simple");
+
     let handler: Arc<dyn HttpHandler + Send + Sync + 'static> = 
-    match settings.content.handler.as_str() {
+    match handler {
         #[cfg(debug_assertions)]
         "debug" => Arc::new(DebugHandler),
         "simple" => Arc::new(SimpleHandler { _args: args.clone(), settings: settings.clone() }),
 
         _ => {
-            eprintln!("no handler named {} available", settings.content.handler.as_str());
+            eprintln!("no handler named {} available", handler);
             return
         }
     };
@@ -120,6 +122,12 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
                     eprintln!("{err}")
                 }
             },
+            "httpx" => {
+                if let Err(err) = start_dyn_tls(&mut jhs, loc, tls_acceptor.clone(), handler.clone(), true, true, None).await {
+                    eprintln!("couldnt listen to {loc}");
+                    eprintln!("{err}")
+                }
+            },
 
             #[cfg(feature = "unix-sockets")]
             "unix" => {
@@ -164,16 +172,16 @@ impl From<tokio::net::unix::SocketAddr> for GenAddr {
 }
 
 pub trait Listener {
-    async fn accept(&self) -> std::io::Result<(PolyStream, GenAddr)>;
+    async fn accept(&self) -> std::io::Result<(DynStream, GenAddr)>;
 }
 impl Listener for TcpListener {
-    async fn accept(&self) -> std::io::Result<(PolyStream, GenAddr)> {
+    async fn accept(&self) -> std::io::Result<(DynStream, GenAddr)> {
         let (stream, addr) = self.accept().await?;
         Ok((stream.into(), addr.into()))
     }
 }
 impl Listener for UnixListener {
-    async fn accept(&self) -> std::io::Result<(PolyStream, GenAddr)> {
+    async fn accept(&self) -> std::io::Result<(DynStream, GenAddr)> {
         let (stream, addr) = self.accept().await?;
         Ok((stream.into(), addr.into()))
     }
@@ -184,7 +192,7 @@ pub struct TlsListener {
     acceptor: Arc<TlsAcceptor>,
 }
 impl Listener for TlsListener {
-    async fn accept(&self) -> std::io::Result<(PolyStream, GenAddr)> {
+    async fn accept(&self) -> std::io::Result<(DynStream, GenAddr)> {
         let (tcp, addr) = self.listener.accept().await?;
         let tls = self.acceptor.accept(tcp).await?;
         Ok((tls.into(), addr.into()))
@@ -206,6 +214,45 @@ pub async fn start_tls<A: tokio::net::ToSocketAddrs>(jhs: &mut Vec<JoinHandle<()
     jhs.push(tokio::spawn(serve(listener, handler, allow_h2c, allow_prior_knowledge, /*peek,*/ assume)));
     
     Ok(())
+}
+pub async fn start_dyn_tls<A: tokio::net::ToSocketAddrs>(jhs: &mut Vec<JoinHandle<()>>, addr: A, acceptor: Arc<TlsAcceptor>, handler: Arc<dyn HttpHandler + Send + Sync + 'static>, allow_h2c: bool, allow_prior_knowledge: bool, /*peek: bool,*/ assume: Option<HttpVersion>) -> std::io::Result<()> {
+    let listener = TcpListener::bind(addr).await?;
+    
+    jhs.push(tokio::spawn(async move {
+        loop {
+            let Ok((tcp, addr)) = listener.accept().await else { continue; };
+            let handler = handler.clone();
+
+            let assume = assume.clone();
+            let acceptor = acceptor.clone();
+            tokio::spawn(async move {
+                match dyn_upgrade(tcp, acceptor).await {
+                    Ok(stream) => match handle(handler, stream, addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
+                        Ok(()) => (),
+                        Err(err) => eprintln!("{err}"),
+                    },
+                    Err(err) => {
+                        eprintln!("{err}")
+                    },
+                }
+            });
+        }
+    }));
+    
+    Ok(())
+}
+pub async fn dyn_upgrade(tcp: TcpStream, acceptor: Arc<TlsAcceptor>) -> Result<DynStream, std::io::Error> {
+    let mut byte = [0];
+    tcp.peek(&mut byte).await?;
+
+    if byte[0] == 22 {
+        let tls = acceptor.accept(tcp).await?;
+        Ok(tls.into())
+    }
+    else {
+        Ok(tcp.into())
+    }
+
 }
 pub async fn serve<L: Listener>(listener: L, handler: Arc<dyn HttpHandler + Send + Sync + 'static>, allow_h2c: bool, allow_prior_knowledge: bool, /*peek: bool,*/ assume: Option<HttpVersion>) {
     loop {
@@ -238,7 +285,7 @@ fn alpn_match(alpn: &[u8]) -> Option<HttpVersion> {
 pub async fn handle(
     handler: Arc<dyn HttpHandler + Send + Sync + 'static>, 
     
-    mut stream: PolyStream, 
+    mut stream: DynStream, 
     addr: GenAddr,
 
     allow_h2c: bool,
@@ -252,21 +299,21 @@ pub async fn handle(
     let mut peek = [0; 24];
 
     match &mut stream {
-        PolyStream::Tcp(tcp) => tcp.peek(&mut peek).await?,
+        DynStream::Tcp(tcp) => tcp.peek(&mut peek).await?,
         _ => 0,
     };
 
     let assume =
     match &stream {
-        PolyStream::TlsDuplex(tls) => {
+        DynStream::TlsDuplex(tls) => {
             let (_, info) = tls.get_ref();
             alpn_match(info.alpn_protocol().unwrap_or(&[]))
         },
-        PolyStream::TcpTls(tls) => {
+        DynStream::TcpTls(tls) => {
             let (_, info) = tls.get_ref();
             alpn_match(info.alpn_protocol().unwrap_or(&[]))
         },
-        PolyStream::UnixTls(tls) => {
+        DynStream::UnixTls(tls) => {
             let (_, info) = tls.get_ref();
             alpn_match(info.alpn_protocol().unwrap_or(&[]))
         },
@@ -292,7 +339,7 @@ pub async fn handle(
         }
     }
     else if allow_prior_knowledge && peek == http::http2::PREFACE {        
-        let h2 = Arc::new(Http2Session::new_buf_server(PolyStream::from(stream), 8 * 1024));
+        let h2 = Arc::new(Http2Session::new_buf_server(DynStream::from(stream), 8 * 1024));
         h2.read_preface().await?;
         h2.send_settings(H2SETTINGS).await?;
         h2_loop(handler, h2, addr).await?;
@@ -319,19 +366,27 @@ pub async fn handle(
     Ok(())
 }
 
-pub async fn h2_loop(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, h2: Arc<Http2Session<BufReader<ReadHalf<PolyStream>>, WriteHalf<PolyStream>>>, addr: GenAddr) -> Result<(), LibError> {
+pub async fn h2_loop(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, h2: Arc<Http2Session<BufReader<ReadHalf<DynStream>>, WriteHalf<DynStream>>>, addr: GenAddr) -> Result<(), LibError> {
     loop {
-        if let Some(id) = h2.next().await? { // TODO: properly handle the error so a protocol violation can be sent
-            let http = PolyHttpSocket::Http2(Http2Socket::new(id, h2.clone())?);
-            let hand = handler.clone();
-            let addr = addr.clone();
+        match h2.next().await {
+            Ok(Some(id)) => {
+                let http = PolyHttpSocket::Http2(Http2Socket::new(id, h2.clone())?);
+                let hand = handler.clone();
+                let addr = addr.clone();
 
-            tokio::spawn(async move {
-                match hand.entry(http, addr).await {
-                    Ok(()) => (),
-                    Err(err) => eprintln!("{err}"),
-                }
-            });
+                tokio::spawn(async move {
+                    match hand.entry(http, addr).await {
+                        Ok(()) => (),
+                        Err(err) => eprintln!("{err}"),
+                    }
+                });
+            },
+            Ok(None) => (),
+            Err(err) => {
+                eprintln!("{err}");
+                h2.send_goaway(0, 1, b"protocol error").await?;
+                break;
+            }
         }
         if h2.goaway.load(std::sync::atomic::Ordering::Relaxed) {
             break;
@@ -340,7 +395,7 @@ pub async fn h2_loop(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, h2: 
 
     Ok(())
 }
-pub async fn possible_h2c(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, mut http1: Http1Socket<ReadHalf<PolyStream>, WriteHalf<PolyStream>>, addr: GenAddr, verover: Option<HttpVersion>) -> Result<(), LibError> {
+pub async fn possible_h2c(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, mut http1: Http1Socket<ReadHalf<DynStream>, WriteHalf<DynStream>>, addr: GenAddr, verover: Option<HttpVersion>) -> Result<(), LibError> {
     let client = http1.read_until_head_complete().await?;
     
     if 

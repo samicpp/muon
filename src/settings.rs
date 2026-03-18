@@ -74,7 +74,7 @@ pub struct EnvironmentSettings {
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ContentSettings {
-    pub handler: String,
+    pub handler: Option<String>,
     pub max_file_size: Option<usize>,
     #[serde(default = "def_serve_dir")]
     pub serve_dir: String,

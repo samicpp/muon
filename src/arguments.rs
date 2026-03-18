@@ -14,4 +14,7 @@ pub struct Cli {
 
     #[arg(long = "settings-name", help = "changes the name of the toml it looks for")]
     pub settings_name: Option<String>,
+
+    #[arg(long, short = 'H', help = "sets the handler that will serve content")]
+    pub handler: Option<String>,
 }

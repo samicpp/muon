@@ -1,23 +1,22 @@
 mod arguments;
 mod settings;
-mod ssltls;
+// mod ssltls;
 mod handlers;
 mod servers;
-mod stream;
+// mod stream;
 
-use std::{path::PathBuf, sync::{Arc, LazyLock, OnceLock}, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use clap::Parser;
-use http::extra::PolyHttpSocket;
-use rustls::crypto::CryptoProvider;
+use http::{extra::PolyHttpSocket, ffihttp::DynStream, httprs_core::ffi::own::RT};
 use tokio::io::{ReadHalf, WriteHalf};
 
-use crate::{arguments::Cli, servers::start_servers, settings::Settings, stream::PolyStream};
+use crate::{arguments::Cli, servers::start_servers, settings::Settings};
 
-pub static PROVIDER: LazyLock<Arc<CryptoProvider>> = LazyLock::new(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
-pub static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+// pub static PROVIDER: LazyLock<Arc<CryptoProvider>> = LazyLock::new(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
+// pub static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
-pub type DynHttpSocket = PolyHttpSocket<ReadHalf<PolyStream>, WriteHalf<PolyStream>>;
+pub type DynHttpSocket = PolyHttpSocket<ReadHalf<DynStream>, WriteHalf<DynStream>>;
 
 fn main() {
     let args = Cli::parse();

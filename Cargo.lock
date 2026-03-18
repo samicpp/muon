@@ -64,6 +64,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "asyncffi"
+version = "3.3.1"
+dependencies = [
+ "dashmap",
+ "http",
+ "httprs_core",
+ "rand",
+ "rustls",
+ "tokio",
+ "tokio-rustls",
+ "webpki-roots",
+]
+
+[[package]]
 name = "aws-lc-rs"
 version = "1.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -332,9 +346,11 @@ dependencies = [
 
 [[package]]
 name = "httplib"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
+ "asyncffi",
  "http",
+ "httprs_core",
  "quic",
 ]
 
@@ -405,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "muon"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "async-trait",
  "clap",
@@ -820,6 +836,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9517f9239f02c069db75e65f174b3da828fe5f5b945c4dd26bd25d89c03ebcf5"
 dependencies = [
  "wit-bindgen",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cfaf3c063993ff62e73cb4311efde4db1efb31ab78a3e5c457939ad5cc0bed"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]
