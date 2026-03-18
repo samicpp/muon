@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc, time::Instant};
 
 use http::shared::{HttpSocket, LibError};
 
-use crate::{DynHttpSocket, arguments::Cli, handlers::{HttpHandler, sanitize_path}, log_with_level, logger::{check_loglevel, log_client_simple, loglevels}, servers::GenAddr, settings::Settings};
+use crate::{DynHttpSocket, arguments::Cli, handlers::{HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::{check_loglevel, log_client_simple, loglevels}, servers::GenAddr, settings::Settings};
 
 
 
@@ -19,7 +19,8 @@ impl HttpHandler for SimpleHandler{
 
         let mut status = 200;
 
-        log_with_level!(loglevels::CLIENT_DUMP, "\x1b[90m[{:?}]\x1b[0m {}", addr, log_client_simple(client));
+        if check_loglevel(loglevels::CLIENT_DUMP) { dbg!(client); }
+        log_with_level!(loglevels::REQUEST, "\x1b[90m[{:?}]\x1b[0m {}", addr, log_client_simple(client));
 
         http.set_header("Server", "simple-serve");
         http.set_header("Content-Type", "text/plain");
@@ -102,12 +103,10 @@ impl SimpleHandler {
             http.close(b"file too big").await?;
         }
         else {
-            if name.ends_with(".html") { http.set_header("Content-Type", "text/html"); }
-            else if name.ends_with(".js") { http.set_header("Content-Type", "text/javascript"); }
-            else if name.ends_with(".css") { http.set_header("Content-Type", "text/css"); }
-            else if name.ends_with(".png") { http.set_header("Content-Type", "img/png"); }
-            else if name.ends_with(".jpg") { http.set_header("Content-Type", "img/jpeg"); }
-            else if name.ends_with(".jpeg") { http.set_header("Content-Type", "img/jpeg"); }
+            let last = name.split(".").last().unwrap_or("");
+            let mime = *MIME_TYPES.get(last).unwrap_or(&"application/octet-stream");
+
+            http.set_header("Content-Type", mime);
 
             http.close(&tokio::fs::read(path).await?).await?;
         }

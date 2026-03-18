@@ -289,8 +289,8 @@ fn alpn_match(alpn: &[u8]) -> Option<HttpVersion> {
     match alpn {
         b"h2" => Some(HttpVersion::Http2),
         b"http/1.1" => Some(HttpVersion::Http11),
-        // b"http/1.0" => Some(HttpVersion::Http10), // unofficial
-        // b"http/0.9" => Some(HttpVersion::Http09), // unofficial
+        b"http/1.0" => Some(HttpVersion::Http10), // unofficial
+        b"http/0.9" => Some(HttpVersion::Http09), // unofficial
 
         _ => None,
     }

@@ -55,11 +55,21 @@ fn main() {
     };
     let settings = settings.unwrap_or_default();
 
-    if args.loglevel.is_none() && let Some(mut lvl) = settings.logging.loglevel {
+    if 
+        args.loglevel.is_none() && 
+        let Some(mut lvl) = settings.logging.loglevel.or(settings.logging.loglevel_template.as_deref().map(
+            |preset| match preset {
+                "all" | "everything" | "*" => u64::MAX,
+                "nececities" | "needed" | "-" => loglevels::INIT_ERROR | loglevels::REQUEST,
+                "verbose" | "+" => loglevels::INIT_ERROR | loglevels::REQUEST | loglevels::EXIT | loglevels::RESPONSE | loglevels::CONTENT_HANDLER_ERROR,
+                _ => LOGLEVEL.load(std::sync::atomic::Ordering::Relaxed),
+            }
+        )) {
         
         match settings.logging.init_error { Some(true) => lvl |= loglevels::INIT_ERROR, Some(false) => lvl &= !loglevels::INIT_ERROR, None => {} }
         match settings.logging.exit { Some(true) => lvl |= loglevels::EXIT, Some(false) => lvl &= !loglevels::EXIT, None => {} }
         match settings.logging.client_dump { Some(true) => lvl |= loglevels::CLIENT_DUMP, Some(false) => lvl &= !loglevels::CLIENT_DUMP, None => {} }
+        match settings.logging.request { Some(true) => lvl |= loglevels::REQUEST, Some(false) => lvl &= !loglevels::REQUEST, None => {} }
         match settings.logging.response { Some(true) => lvl |= loglevels::RESPONSE, Some(false) => lvl &= !loglevels::RESPONSE, None => {} }
         match settings.logging.response_time { Some(true) => lvl |= loglevels::RESPONSE_TIME, Some(false) => lvl &= !loglevels::RESPONSE_TIME, None => {} }
         match settings.logging.handler_error { Some(true) => lvl |= loglevels::HANDLER_ERROR, Some(false) => lvl &= !loglevels::HANDLER_ERROR, None => {} }

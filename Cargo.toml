@@ -1,6 +1,6 @@
 [package]
 name = "muon"
-version = "1.0.3"
+version = "1.0.4"
 edition = "2024"
 
 [dependencies]
@@ -17,6 +17,7 @@ tokio-rustls = "=0.26.4"
 
 async-trait = "0.1.89"
 owo-colors = "4.3.0"
+phf = { version = "0.13.1", features = ["macros"] }
 
 [features]
 default = ["unix-sockets"]

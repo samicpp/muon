@@ -2,6 +2,7 @@
 pub mod debug;
 pub mod simple;
 pub mod samicpp;
+pub mod mime_types;
 
 use std::{path::{Path, PathBuf}, sync::Arc};
 

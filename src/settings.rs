@@ -85,10 +85,12 @@ pub struct ContentSettings {
 #[derive(Debug, Deserialize, Default)]
 pub struct LogSettings {
     pub loglevel: Option<u64>,
+    pub loglevel_template: Option<String>,
 
     pub init_error: Option<bool>,
     pub exit: Option<bool>,
     pub client_dump: Option<bool>,
+    pub request: Option<bool>,
     pub response: Option<bool>,
     pub response_time: Option<bool>,
     pub handler_error: Option<bool>,
