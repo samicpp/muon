@@ -4,12 +4,14 @@ mod settings;
 mod handlers;
 mod servers;
 // mod stream;
+mod logger;
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use clap::Parser;
 use http::{extra::PolyHttpSocket, ffihttp::DynStream, httprs_core::ffi::own::RT};
 use tokio::io::{ReadHalf, WriteHalf};
+use owo_colors::OwoColorize;
 
 use crate::{arguments::Cli, servers::start_servers, settings::Settings};
 
@@ -28,8 +30,7 @@ fn main() {
     let Some(cwd) = &args.cwd && 
     let Err(err) = std::env::set_current_dir(&cwd) 
     {
-        eprintln!("couldnt set cwd");
-        eprintln!("{err}");
+        eprintln!("couldnt set cwd {}", err.red());
     }
 
 
@@ -39,7 +40,7 @@ fn main() {
     else { std::env::current_exe().map(|p| p.parent().map(|p| p.join(sname)).unwrap_or(PathBuf::from(&spfallback))) } 
     {
         Err(e) => {
-            eprintln!("couldnt get executable path");
+            eprintln!("couldnt get executable path {}", e.red());
             eprintln!("{e}");
             Err(())
         },

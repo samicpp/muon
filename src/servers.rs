@@ -8,7 +8,7 @@ use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::{TcpListener, TcpStream},
 use tokio_rustls::TlsAcceptor;
 #[cfg(debug_assertions)]
 use crate::handlers::debug::DebugHandler;
-use crate::{arguments::Cli, handlers::{HttpHandler, simple::SimpleHandler}, settings::Settings};
+use crate::{arguments::Cli, handlers::{HttpHandler, samicpp::SamicppHandler, simple::SimpleHandler}, settings::Settings};
 
 
 pub static H2SETTINGS: Http2Settings = Http2Settings::default_no_push();
@@ -24,6 +24,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
         #[cfg(debug_assertions)]
         "debug" => Arc::new(DebugHandler),
         "simple" => Arc::new(SimpleHandler { _args: args.clone(), settings: settings.clone() }),
+        "samicpp" => Arc::new(SamicppHandler::new(args.clone(), settings.clone())),
 
         _ => {
             eprintln!("no handler named {} available", handler);

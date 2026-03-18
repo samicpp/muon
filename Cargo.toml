@@ -1,6 +1,6 @@
 [package]
 name = "muon"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2024"
 
 [dependencies]
@@ -16,6 +16,7 @@ rustls = { version = "=0.23.37", default-features = false, features = ["aws-lc-r
 tokio-rustls = "=0.26.4"
 
 async-trait = "0.1.89"
+owo-colors = "4.3.0"
 
 [features]
 default = ["unix-sockets"]

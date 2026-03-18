@@ -1,6 +1,7 @@
 #[cfg(debug_assertions)]
 pub mod debug;
 pub mod simple;
+pub mod samicpp;
 
 use std::{path::{Path, PathBuf}, sync::Arc};
 
