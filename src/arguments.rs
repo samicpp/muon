@@ -17,4 +17,7 @@ pub struct Cli {
 
     #[arg(long, short = 'H', help = "sets the handler that will serve content")]
     pub handler: Option<String>,
+
+    #[arg(long, short, help = "sets the loglevel, overrides settings")]
+    pub loglevel: Option<u64>,
 }

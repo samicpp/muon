@@ -1,5 +1,7 @@
 // use std::fmt::Display;
 
+use std::{sync::atomic::AtomicU64, u64};
+
 use http::shared::HttpClient;
 
 
@@ -27,6 +29,10 @@ use http::shared::HttpClient;
 //     fn color_bg_8(&self, color: u8) -> String { format!("\x1b[48;5;{color}m{self}") }
 //     fn color_bg_24(&self, r: u8, g: u8, b: u8) -> String { format!("\x1b[48;2;{r};{g};{b}m{self}") }
 // }
+
+pub static LOGLEVEL: AtomicU64 = AtomicU64::new(u64::MAX);
+
+
 
 pub fn log_client_simple(client: &HttpClient) -> String {
     use http::shared::HttpMethod::*;
@@ -62,6 +68,26 @@ pub fn log_client_simple(client: &HttpClient) -> String {
     )
 }
 
+pub fn check_loglevel<N: Into<u64>>(level: N) -> bool {
+    (LOGLEVEL.load(std::sync::atomic::Ordering::Relaxed) & level.into()) != 0
+}
+
+#[macro_export]
+macro_rules! log_with_level {
+    ($level:expr, $($arg:tt)*) => {{
+        if crate::logger::check_loglevel($level) {
+            println!($($arg)*);
+        }
+    }};
+}
+#[macro_export]
+macro_rules! elog_with_level {
+    ($level:expr, $($arg:tt)*) => {{
+        if crate::logger::check_loglevel($level) {
+            eprintln!($($arg)*);
+        }
+    }};
+}
 
 // pub fn color_line_24(text: &str, foreground: Option<(u8, u8, u8)>, background: Option<(u8, u8, u8)>, reset: bool) -> String {
 //     let mut text = text.to_string();
@@ -89,3 +115,32 @@ pub fn log_client_simple(client: &HttpClient) -> String {
 //     text
 // }
 
+pub mod loglevels {
+    pub const INIT_ERROR: u64 = 0b1;
+
+    pub const EXIT: u64 = 0b10;
+    pub const CLIENT_DUMP: u64 = 0b100;
+
+    pub const RESPONSE: u64 = 0b1_000;
+    pub const RESPONSE_TIME: u64 = 0b10_000;
+
+    pub const HANDLER_ERROR: u64 = 0b100_000;
+    pub const TLS_UPGRADE_ERROR: u64 = 0b1_000_000;
+    pub const CONTENT_HANDLER_ERROR: u64 = 0b10_000_000;
+    pub const HTTP2_ERROR: u64 = 0b10_000_000;
+    pub const HTTP2_FRAME_DUMP: u64 = 0b100_000_000;
+}
+
+    // Debug = 1,
+    // Verbose = 2,
+    // Log = 4,
+    // Info = 8,
+    // Dump = 16,
+    // Trace = 32,
+    // Init = 64,
+    // Warning = 128,
+    // SoftError = 256,
+    // Error = 512,
+    // Critical = 1024,
+    // Fatal = 2048,
+    // Assert = 4096,

@@ -13,7 +13,7 @@ use http::{extra::PolyHttpSocket, ffihttp::DynStream, httprs_core::ffi::own::RT}
 use tokio::io::{ReadHalf, WriteHalf};
 use owo_colors::OwoColorize;
 
-use crate::{arguments::Cli, servers::start_servers, settings::Settings};
+use crate::{arguments::Cli, logger::{LOGLEVEL, loglevels}, servers::start_servers, settings::Settings};
 
 // pub static PROVIDER: LazyLock<Arc<CryptoProvider>> = LazyLock::new(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
 // pub static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -25,12 +25,16 @@ fn main() {
     let sname = args.settings_name.as_ref().map(|s| s.to_owned()).unwrap_or("settings.toml".to_owned());
     let spfallback = "./".to_owned() + &sname;
 
+    if let Some(lvl) = args.loglevel {
+        LOGLEVEL.swap(lvl, std::sync::atomic::Ordering::Relaxed);
+    }
+
 
     if 
     let Some(cwd) = &args.cwd && 
     let Err(err) = std::env::set_current_dir(&cwd) 
     {
-        eprintln!("couldnt set cwd {}", err.red());
+        elog_with_level!(loglevels::INIT_ERROR, "couldnt set cwd {}", err.red());
     }
 
 
@@ -40,17 +44,32 @@ fn main() {
     else { std::env::current_exe().map(|p| p.parent().map(|p| p.join(sname)).unwrap_or(PathBuf::from(&spfallback))) } 
     {
         Err(e) => {
-            eprintln!("couldnt get executable path {}", e.red());
-            eprintln!("{e}");
+            elog_with_level!(loglevels::INIT_ERROR, "couldnt get executable path {}", e.red());
             Err(())
         },
         Ok(me) => match load_settings(&me.as_os_str().to_str().unwrap_or(&spfallback)) {
             Ok(sett) => Ok(sett),
-            Err(AorB::A(err)) => Err(eprintln!("io error {err}")),
-            Err(AorB::B(err)) => Err(eprintln!("toml error {err}")),
+            Err(AorB::A(err)) => Err(elog_with_level!(loglevels::INIT_ERROR, "io error {err}")),
+            Err(AorB::B(err)) => Err(elog_with_level!(loglevels::INIT_ERROR, "toml error {err}")),
         }
     };
     let settings = settings.unwrap_or_default();
+
+    if args.loglevel.is_none() && let Some(mut lvl) = settings.logging.loglevel {
+        
+        match settings.logging.init_error { Some(true) => lvl |= loglevels::INIT_ERROR, Some(false) => lvl &= !loglevels::INIT_ERROR, None => {} }
+        match settings.logging.exit { Some(true) => lvl |= loglevels::EXIT, Some(false) => lvl &= !loglevels::EXIT, None => {} }
+        match settings.logging.client_dump { Some(true) => lvl |= loglevels::CLIENT_DUMP, Some(false) => lvl &= !loglevels::CLIENT_DUMP, None => {} }
+        match settings.logging.response { Some(true) => lvl |= loglevels::RESPONSE, Some(false) => lvl &= !loglevels::RESPONSE, None => {} }
+        match settings.logging.response_time { Some(true) => lvl |= loglevels::RESPONSE_TIME, Some(false) => lvl &= !loglevels::RESPONSE_TIME, None => {} }
+        match settings.logging.handler_error { Some(true) => lvl |= loglevels::HANDLER_ERROR, Some(false) => lvl &= !loglevels::HANDLER_ERROR, None => {} }
+        match settings.logging.tls_upgrade_error { Some(true) => lvl |= loglevels::TLS_UPGRADE_ERROR, Some(false) => lvl &= !loglevels::TLS_UPGRADE_ERROR, None => {} }
+        match settings.logging.content_handler_error { Some(true) => lvl |= loglevels::CONTENT_HANDLER_ERROR, Some(false) => lvl &= !loglevels::CONTENT_HANDLER_ERROR, None => {} }
+        match settings.logging.http2_error { Some(true) => lvl |= loglevels::HTTP2_ERROR, Some(false) => lvl &= !loglevels::HTTP2_ERROR, None => {} }
+        match settings.logging.http2_frame_dump { Some(true) => lvl |= loglevels::HTTP2_FRAME_DUMP, Some(false) => lvl &= !loglevels::HTTP2_FRAME_DUMP, None => {} }
+
+        LOGLEVEL.swap(lvl, std::sync::atomic::Ordering::Relaxed);
+    }
 
 
     let args = Arc::new(args);
@@ -60,12 +79,12 @@ fn main() {
         match RT.get().unwrap().block_on(jh) {
             Ok(()) => (),
             Err(e) => {
-                eprintln!("couldnt wait for server to finish");
-                eprintln!("{e}");
+                elog_with_level!(loglevels::INIT_ERROR, "couldnt wait for server to finish {}", e.red());
             }
         }
     }
-    println!("done, exiting")
+
+    elog_with_level!(loglevels::EXIT, "done, exiting")
 }
 
 fn load_settings(path: &str) -> Result<Settings, AorB<std::io::Error, toml::de::Error>> {
@@ -88,8 +107,7 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>) -> Option<tokio::task::JoinH
     let Some(cwd) = &settings.environment.cwd && 
     let Err(err) = std::env::set_current_dir(&cwd) 
     {
-        eprintln!("couldnt set cwd");
-        eprintln!("{err}");
+        elog_with_level!(loglevels::INIT_ERROR, "couldnt set cwd {}", err.red());
     }
 
     if settings.environment.multi_threaded {
@@ -111,8 +129,7 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>) -> Option<tokio::task::JoinH
                 Some(handle)
             },
             Err(err) => {
-                eprintln!("failed to build runtime");
-                eprintln!("{err}");
+                elog_with_level!(loglevels::INIT_ERROR, "failed to build runtime {}", err.red());
                 None
             }
         }
@@ -131,8 +148,7 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>) -> Option<tokio::task::JoinH
                 Some(handle)
             },
             Err(err) => {
-                eprintln!("failed to build runtime");
-                eprintln!("{err}");
+                elog_with_level!(loglevels::INIT_ERROR, "failed to build runtime {}", err.red());
                 None
             }
         }

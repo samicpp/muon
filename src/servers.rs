@@ -6,9 +6,10 @@ use rustls::{pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject}, sign::C
 use tokio::net::UnixListener;
 use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::{TcpListener, TcpStream}, task::JoinHandle};
 use tokio_rustls::TlsAcceptor;
+use owo_colors::OwoColorize;
 #[cfg(debug_assertions)]
 use crate::handlers::debug::DebugHandler;
-use crate::{arguments::Cli, handlers::{HttpHandler, samicpp::SamicppHandler, simple::SimpleHandler}, settings::Settings};
+use crate::{arguments::Cli, elog_with_level, handlers::{HttpHandler, samicpp::SamicppHandler, simple::SimpleHandler}, logger::{check_loglevel, loglevels}, settings::Settings};
 
 
 pub static H2SETTINGS: Http2Settings = Http2Settings::default_no_push();
@@ -27,7 +28,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
         "samicpp" => Arc::new(SamicppHandler::new(args.clone(), settings.clone())),
 
         _ => {
-            eprintln!("no handler named {} available", handler);
+            elog_with_level!(loglevels::INIT_ERROR, "no handler named {} available", handler);
             return
         }
     };
@@ -75,66 +76,58 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
 
         let Some(prot) = pl.next() else { continue; };
         let Some(loc) = pl.next() else {
-            eprintln!("invalid address: \"{addr}\"");
+            elog_with_level!(loglevels::INIT_ERROR, "invalid address: \"{addr}\"");
             continue;
         };
 
         match prot {
             "tcp" | "http" => {
                 if let Err(err) = start_tcp(&mut jhs, loc, handler.clone(), true, true, None).await {
-                    eprintln!("couldnt listen to {loc}");
-                    eprintln!("{err}")
+                    elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red());
                 }
             },
             "http1" => {
                 if let Err(err) = start_tcp(&mut jhs, loc, handler.clone(), false, false, None).await {
-                    eprintln!("couldnt listen to {loc}");
-                    eprintln!("{err}")
+                    elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red());
                 }
             },
             "http1.1" => {
                 if let Err(err) = start_tcp(&mut jhs, loc, handler.clone(), false, false, Some(HttpVersion::Http11)).await {
-                    eprintln!("couldnt listen to {loc}");
-                    eprintln!("{err}")
+                    elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red());
                 }
             },
             "http1.0" => {
                 if let Err(err) = start_tcp(&mut jhs, loc, handler.clone(), false, false, Some(HttpVersion::Http10)).await {
-                    eprintln!("couldnt listen to {loc}");
-                    eprintln!("{err}")
+                    elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red());
                 }
             },
             "http0.9" => {
                 if let Err(err) = start_tcp(&mut jhs, loc, handler.clone(), false, false, Some(HttpVersion::Http09)).await {
-                    eprintln!("couldnt listen to {loc}");
-                    eprintln!("{err}")
+                    elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red());
                 }
             },
 
             "http2" => {
                 if let Err(err) = start_tcp(&mut jhs, loc, handler.clone(), false, false, Some(HttpVersion::Http2)).await {
-                    eprintln!("couldnt listen to {loc}");
-                    eprintln!("{err}")
+                    elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red());
                 }
             },
 
             "https" => {
                 if let Err(err) = start_tls(&mut jhs, loc, tls_acceptor.clone(), handler.clone(), true, false, None).await {
-                    eprintln!("couldnt listen to {loc}");
-                    eprintln!("{err}")
+                    elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red());
                 }
             },
             "httpx" => {
                 if let Err(err) = start_dyn_tls(&mut jhs, loc, tls_acceptor.clone(), handler.clone(), true, true, None).await {
-                    eprintln!("couldnt listen to {loc}");
-                    eprintln!("{err}")
+                    elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red());
                 }
             },
 
             #[cfg(feature = "unix-sockets")]
             "unix" => {
                 match UnixListener::bind(loc) {
-                    Err(err) => eprintln!("{err}"),
+                    Err(err) => elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red()),
                     Ok(listener) => {
                         // servers.push(Server::TcpH2(server.clone()));
                         let handler = handler.clone();
@@ -143,7 +136,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
                 }
             }
 
-            _ => eprintln!("invalid protocol \"{prot}\""),
+            _ => elog_with_level!(loglevels::INIT_ERROR, "invalid protocol \"{prot}\""),
         }
     }
 
@@ -224,10 +217,10 @@ pub async fn start_tls<A: tokio::net::ToSocketAddrs>(jhs: &mut Vec<JoinHandle<()
                 match acceptor.accept(stream).await {
                     Ok(tls) => match handle(handler, tls.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
                         Ok(()) => (),
-                        Err(err) => eprintln!("{err}"),
+                        Err(err) => elog_with_level!(loglevels::HANDLER_ERROR, "{err}"),
                     },
                     Err(err) => {
-                        eprintln!("{err}")
+                        elog_with_level!(loglevels::TLS_UPGRADE_ERROR, "{err}")
                     }
                 }
             });
@@ -250,10 +243,10 @@ pub async fn start_dyn_tls<A: tokio::net::ToSocketAddrs>(jhs: &mut Vec<JoinHandl
                 match dyn_upgrade(tcp, acceptor).await {
                     Ok(stream) => match handle(handler, stream, addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
                         Ok(()) => (),
-                        Err(err) => eprintln!("{err}"),
+                        Err(err) => elog_with_level!(loglevels::HANDLER_ERROR, "{err}"),
                     },
                     Err(err) => {
-                        eprintln!("{err}")
+                        elog_with_level!(loglevels::TLS_UPGRADE_ERROR, "{err}")
                     },
                 }
             });
@@ -284,7 +277,7 @@ pub async fn serve<L: Listener>(listener: L, handler: Arc<dyn HttpHandler + Send
         tokio::spawn(async move {
             match handle(handler, stream.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
                 Ok(()) => (),
-                Err(err) => eprintln!("{err}"),
+                Err(err) => elog_with_level!(loglevels::HANDLER_ERROR, "{err}"),
             }
         });
     }
@@ -354,7 +347,10 @@ pub async fn handle(
                 let http1 = Http1Socket::new(stream, 8 * 1024);
                 if allow_h2c { possible_h2c(handler, http1, addr, assume).await?; }
                 else {
-                    handler.entry(http1.into(), addr).await?;
+                    match handler.entry(http1.into(), addr).await {
+                        Ok(()) => {},
+                        Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
+                    };
                 }
             }
         }
@@ -381,7 +377,12 @@ pub async fn handle(
         }
 
         else if allow_h2c { possible_h2c(handler, http1, addr, None).await?; }
-        else { handler.entry(http1.into(), addr).await?; }
+        else { 
+            match handler.entry(http1.into(), addr).await {
+                Ok(()) => {},
+                Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
+            }
+        }
     }
 
     Ok(())
@@ -389,7 +390,11 @@ pub async fn handle(
 
 pub async fn h2_loop(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, h2: Arc<Http2Session<BufReader<ReadHalf<DynStream>>, WriteHalf<DynStream>>>, addr: GenAddr) -> Result<(), LibError> {
     loop {
-        match h2.next().await {
+        let frame = h2.read_frame().await?;
+        if check_loglevel(loglevels::HTTP2_FRAME_DUMP) {
+            println!("\x1b[36m{:?}\x1b[0m ({}) {:?}", frame.ftype, frame.source.len(), &frame.source[..29.min(frame.source.len())]);
+        }
+        match h2.handle(frame).await {
             Ok(Some(id)) => {
                 let http = PolyHttpSocket::Http2(Http2Socket::new(id, h2.clone())?);
                 let hand = handler.clone();
@@ -398,16 +403,20 @@ pub async fn h2_loop(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, h2: 
                 tokio::spawn(async move {
                     match hand.entry(http, addr).await {
                         Ok(()) => (),
-                        Err(err) => eprintln!("{err}"),
+                        Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
                     }
                 });
             },
             Ok(None) => (),
-            Err(err) => {
-                eprintln!("{err}");
+            Err(err @ (LibError::InvalidFrame | LibError::InvalidStream | LibError::ProtocolError | LibError::Huffman(_))) => {
+                elog_with_level!(loglevels::HTTP2_ERROR, "{err}");
                 h2.send_goaway(0, 1, b"protocol error").await?;
                 break;
-            }
+            },
+            Err(err) => {
+                elog_with_level!(loglevels::HTTP2_ERROR, "{err}");
+                break;
+            },
         }
         if h2.goaway.load(std::sync::atomic::Ordering::Relaxed) {
             break;
@@ -434,7 +443,7 @@ pub async fn possible_h2c(handler: Arc<dyn HttpHandler + Send + Sync + 'static>,
         tokio::spawn(async move {
             match hand.entry(http, adr).await {
                 Ok(()) => (),
-                Err(err) => eprintln!("{err}"),
+                Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
             }
         });
 

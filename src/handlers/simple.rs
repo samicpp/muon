@@ -1,8 +1,8 @@
-use std::{path::Path, sync::Arc};
+use std::{path::Path, sync::Arc, time::Instant};
 
 use http::shared::{HttpSocket, LibError};
 
-use crate::{DynHttpSocket, arguments::Cli, handlers::{HttpHandler, sanitize_path}, servers::GenAddr, settings::Settings, logger::log_client_simple};
+use crate::{DynHttpSocket, arguments::Cli, handlers::{HttpHandler, sanitize_path}, log_with_level, logger::{check_loglevel, log_client_simple, loglevels}, servers::GenAddr, settings::Settings};
 
 
 
@@ -14,14 +14,18 @@ pub struct SimpleHandler {
 impl HttpHandler for SimpleHandler{
     async fn entry(self: Arc<Self>, mut http: DynHttpSocket, addr: GenAddr) -> Result<(), LibError> {
         let client = http.read_until_head_complete().await?;
+        let now = Instant::now();
         let path = Path::new(&self.settings.content.serve_dir).join(sanitize_path(&client.path));
 
-        println!("\x1b[90m[{:?}]\x1b[0m {}", addr, log_client_simple(client));
+        let mut status = 200;
+
+        log_with_level!(loglevels::CLIENT_DUMP, "\x1b[90m[{:?}]\x1b[0m {}", addr, log_client_simple(client));
 
         http.set_header("Server", "simple-serve");
         http.set_header("Content-Type", "text/plain");
 
         if !path.exists() {
+            status = 404;
             http.set_status(404, "Not Found".to_owned());
             http.close(format!("{:?} not found", path).as_bytes()).await?;
         }
@@ -50,6 +54,39 @@ impl HttpHandler for SimpleHandler{
         else {
             http.set_status(501, "Not Implemented".to_owned());
             http.close(b"couldn't handle file").await?;
+        }
+
+
+        log_with_level!(loglevels::RESPONSE, "{:?} {}", path, status);
+
+        if check_loglevel(loglevels::RESPONSE_TIME) {
+            let nanos = now.elapsed().as_nanos();
+            let micros = nanos / 1_000;
+            let milis = micros / 1_000;
+            let sec = milis / 1_000;
+            let min = sec / 60;
+            let hours = min / 60;
+            let days = hours / 24;
+
+            let mut stamp = String::new();
+            if days > 0 {
+                stamp.push_str(&format!("{days}d"));
+            }
+            if hours > 0 {
+                stamp.push_str(&format!(" {}d", hours % 24));
+            }
+            if min > 0 {
+                stamp.push_str(&format!(" {}m", min % 60));
+            }
+            if sec > 0 {
+                stamp.push_str(&format!(" {}s", sec % 60));
+            }
+            if milis > 0 {
+                stamp.push_str(&format!(" {}ms", milis % 1000));
+            }
+            stamp.push_str(&format!(" {}μs {}ns", micros % 1_000, nanos % 1_000));
+
+            println!("response took {}", &stamp);
         }
 
         Ok(())
