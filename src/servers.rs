@@ -6,8 +6,9 @@ use rustls::{pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject}, sign::C
 use tokio::net::UnixListener;
 use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::{TcpListener, TcpStream}, task::JoinHandle};
 use tokio_rustls::TlsAcceptor;
-
-use crate::{arguments::Cli, handlers::{HttpHandler, debug::DebugHandler, simple::SimpleHandler}, settings::Settings};
+#[cfg(debug_assertions)]
+use crate::handlers::debug::DebugHandler;
+use crate::{arguments::Cli, handlers::{HttpHandler, simple::SimpleHandler}, settings::Settings};
 
 
 pub static H2SETTINGS: Http2Settings = Http2Settings::default_no_push();
@@ -155,13 +156,13 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
 #[allow(unused)]
 #[derive(Debug, Clone)]
 pub enum GenAddr {
-    Norm(SocketAddr),
+    Net(SocketAddr),
     #[cfg(feature = "unix-sockets")]
     Unix(tokio::net::unix::SocketAddr),
 }
 impl From<SocketAddr> for GenAddr {
     fn from(value: SocketAddr) -> Self {
-        Self::Norm(value)
+        Self::Net(value)
     }
 }
 #[cfg(feature = "unix-sockets")]
@@ -187,17 +188,17 @@ impl Listener for UnixListener {
     }
 }
 
-pub struct TlsListener {
-    listener: TcpListener,
-    acceptor: Arc<TlsAcceptor>,
-}
-impl Listener for TlsListener {
-    async fn accept(&self) -> std::io::Result<(DynStream, GenAddr)> {
-        let (tcp, addr) = self.listener.accept().await?;
-        let tls = self.acceptor.accept(tcp).await?;
-        Ok((tls.into(), addr.into()))
-    }
-}
+// pub struct TlsListener {
+//     listener: TcpListener,
+//     acceptor: Arc<TlsAcceptor>,
+// }
+// impl Listener for TlsListener {
+//     async fn accept(&self) -> std::io::Result<(DynStream, GenAddr)> {
+//         let (tcp, addr) = self.listener.accept().await?;
+//         let tls = self.acceptor.accept(tcp).await?;
+//         Ok((tls.into(), addr.into()))
+//     }
+// }
 
 
 pub async fn start_tcp<A: tokio::net::ToSocketAddrs>(jhs: &mut Vec<JoinHandle<()>>, addr: A, handler: Arc<dyn HttpHandler + Send + Sync + 'static>, allow_h2c: bool, allow_prior_knowledge: bool, /*peek: bool,*/ assume: Option<HttpVersion>) -> std::io::Result<()> {
@@ -209,9 +210,28 @@ pub async fn start_tcp<A: tokio::net::ToSocketAddrs>(jhs: &mut Vec<JoinHandle<()
 }
 pub async fn start_tls<A: tokio::net::ToSocketAddrs>(jhs: &mut Vec<JoinHandle<()>>, addr: A, acceptor: Arc<TlsAcceptor>, handler: Arc<dyn HttpHandler + Send + Sync + 'static>, allow_h2c: bool, allow_prior_knowledge: bool, /*peek: bool,*/ assume: Option<HttpVersion>) -> std::io::Result<()> {
     let listener = TcpListener::bind(addr).await?;
-    let listener = TlsListener { listener, acceptor };
+    // let listener = TlsListener { listener, acceptor };
     
-    jhs.push(tokio::spawn(serve(listener, handler, allow_h2c, allow_prior_knowledge, /*peek,*/ assume)));
+    jhs.push(tokio::spawn(async move {
+        loop {
+            let Ok((stream, addr)) = listener.accept().await else { continue; };
+            let handler = handler.clone();
+
+            let assume = assume.clone();
+            let acceptor = acceptor.clone();
+            tokio::spawn(async move {
+                match acceptor.accept(stream).await {
+                    Ok(tls) => match handle(handler, tls.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
+                        Ok(()) => (),
+                        Err(err) => eprintln!("{err}"),
+                    },
+                    Err(err) => {
+                        eprintln!("{err}")
+                    }
+                }
+            });
+        }
+    }));
     
     Ok(())
 }
@@ -294,7 +314,7 @@ pub async fn handle(
     // peek: bool,
     assume: Option<HttpVersion>,
 ) -> Result<(), LibError> {
-    dbg!(&addr);
+    #[cfg(debug_assertions)] dbg!(&addr);
     
     let mut peek = [0; 24];
 

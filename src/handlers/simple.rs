@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use http::shared::{HttpSocket, LibError};
 
-use crate::{DynHttpSocket, arguments::Cli, handlers::HttpHandler, servers::GenAddr, settings::Settings};
+use crate::{DynHttpSocket, arguments::Cli, handlers::{HttpHandler, sanitize_path}, servers::GenAddr, settings::Settings};
 
 
 
@@ -13,9 +13,8 @@ pub struct SimpleHandler {
 #[async_trait::async_trait]
 impl HttpHandler for SimpleHandler{
     async fn entry(self: Arc<Self>, mut http: DynHttpSocket, addr: GenAddr) -> Result<(), LibError> {
-        let mut client = http.read_until_head_complete().await?.clone();
-        client.path.remove(0);
-        let path = Path::new(&self.settings.content.serve_dir).join(Path::new(&client.path));
+        let client = http.read_until_head_complete().await?;
+        let path = Path::new(&self.settings.content.serve_dir).join(sanitize_path(&client.path));
 
         println!("[{:?}] {} {}", addr, client.method, client.path);
 

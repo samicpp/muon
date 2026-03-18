@@ -10,7 +10,8 @@ pub struct DebugHandler;
 #[async_trait::async_trait]
 impl HttpHandler for DebugHandler{
     async fn entry(self: Arc<Self>, mut http: DynHttpSocket, _a: GenAddr) -> Result<(), LibError> {
-        println!("craxy");
+        // println!("craxy");
+        dbg!(http.read_until_complete().await?);
         http.close(b"body").await?;
         Ok(())
     }
