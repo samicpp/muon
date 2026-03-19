@@ -63,7 +63,11 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
 
     let mut tls_config = sni_builder.to_server_conf();
     
-    if let Some(alpn) = &settings.network.alpn {
+    if let Some(alpn) = args.alpn.as_deref() {
+        let converted = alpn.split(',').map(|alpn| alpn.as_bytes().to_vec()).collect();
+        tls_config.alpn_protocols = converted;
+    }
+    else if let Some(alpn) = &settings.network.alpn {
         let converted = alpn.get().iter().map(|alpn| alpn.as_bytes().to_vec()).collect();
         tls_config.alpn_protocols = converted;
     }

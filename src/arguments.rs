@@ -6,6 +6,9 @@ pub struct Cli {
     #[arg(short, long, num_args(1..), help = "addresses on which to listen")]
     pub addresses: Option<Vec<String>>,
 
+    #[arg(short = 'A', long, num_args(1..), help = "comma seperated alpns, overrides settings")]
+    pub alpn: Option<String>,
+
     #[arg(short, long, help = "changes the cwd immediately")]
     pub cwd: Option<String>,
 
