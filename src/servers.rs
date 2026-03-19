@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, time::{Duration, Instant}};
 
 use http::{extra::PolyHttpSocket, ffihttp::{DynStream, PROVIDER, servers::TlsCertSelector}, http1::server::Http1Socket, http2::{core::Http2Settings, server::Http2Socket, session::Http2Session}, shared::{HttpMethod, HttpType, HttpVersion, LibError}};
 use rustls::{pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject}, sign::CertifiedKey};
@@ -146,6 +146,36 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
 }
 
 
+fn timestamp(elapsed: Duration) -> String {
+    let nanos = elapsed.as_nanos();
+    let micros = nanos / 1_000;
+    let milis = micros / 1_000;
+    let sec = milis / 1_000;
+    let min = sec / 60;
+    let hours = min / 60;
+    let days = hours / 24;
+
+    let mut stamp = String::new();
+    if days > 0 {
+        stamp.push_str(&format!("{days}d"));
+    }
+    if hours > 0 {
+        stamp.push_str(&format!(" {}d", hours % 24));
+    }
+    if min > 0 {
+        stamp.push_str(&format!(" {}m", min % 60));
+    }
+    if sec > 0 {
+        stamp.push_str(&format!(" {}s", sec % 60));
+    }
+    if milis > 0 {
+        stamp.push_str(&format!(" {}ms", milis % 1000));
+    }
+    stamp.push_str(&format!(" {}μs {}ns", micros % 1_000, nanos % 1_000));
+
+    stamp
+}
+
 
 #[allow(unused)]
 #[derive(Debug, Clone)]
@@ -214,6 +244,7 @@ pub async fn start_tls<A: tokio::net::ToSocketAddrs>(jhs: &mut Vec<JoinHandle<()
             let assume = assume.clone();
             let acceptor = acceptor.clone();
             tokio::spawn(async move {
+                let now = Instant::now();
                 match acceptor.accept(stream).await {
                     Ok(tls) => match handle(handler, tls.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
                         Ok(()) => (),
@@ -222,6 +253,10 @@ pub async fn start_tls<A: tokio::net::ToSocketAddrs>(jhs: &mut Vec<JoinHandle<()
                     Err(err) => {
                         elog_with_level!(loglevels::TLS_UPGRADE_ERROR, "{err}")
                     }
+                }
+                if check_loglevel(loglevels::RESPONSE_TIME) {
+                    let stamp = timestamp(now.elapsed());
+                    println!("response took {}", &stamp);
                 }
             });
         }
@@ -240,6 +275,7 @@ pub async fn start_dyn_tls<A: tokio::net::ToSocketAddrs>(jhs: &mut Vec<JoinHandl
             let assume = assume.clone();
             let acceptor = acceptor.clone();
             tokio::spawn(async move {
+                let now = Instant::now();
                 match dyn_upgrade(tcp, acceptor).await {
                     Ok(stream) => match handle(handler, stream, addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
                         Ok(()) => (),
@@ -248,6 +284,10 @@ pub async fn start_dyn_tls<A: tokio::net::ToSocketAddrs>(jhs: &mut Vec<JoinHandl
                     Err(err) => {
                         elog_with_level!(loglevels::TLS_UPGRADE_ERROR, "{err}")
                     },
+                }
+                if check_loglevel(loglevels::RESPONSE_TIME) {
+                    let stamp = timestamp(now.elapsed());
+                    println!("response took {}", &stamp);
                 }
             });
         }
@@ -275,9 +315,14 @@ pub async fn serve<L: Listener>(listener: L, handler: Arc<dyn HttpHandler + Send
 
         let assume = assume.clone();
         tokio::spawn(async move {
+            let now = Instant::now();
             match handle(handler, stream.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
                 Ok(()) => (),
                 Err(err) => elog_with_level!(loglevels::HANDLER_ERROR, "{err}"),
+            }
+            if check_loglevel(loglevels::RESPONSE_TIME) {
+                let stamp = timestamp(now.elapsed());
+                println!("response took {}", &stamp);
             }
         });
     }

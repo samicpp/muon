@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc, time::Instant};
+use std::{path::Path, sync::Arc};
 
 use http::shared::{HttpSocket, LibError};
 
@@ -14,7 +14,6 @@ pub struct SimpleHandler {
 impl HttpHandler for SimpleHandler{
     async fn entry(self: Arc<Self>, mut http: DynHttpSocket, addr: GenAddr) -> Result<(), LibError> {
         let client = http.read_until_head_complete().await?;
-        let now = Instant::now();
         let path = Path::new(&self.settings.content.serve_dir).join(sanitize_path(&client.path));
 
         let mut status = 200;
@@ -60,35 +59,7 @@ impl HttpHandler for SimpleHandler{
 
         log_with_level!(loglevels::RESPONSE, "{:?} {}", path, status);
 
-        if check_loglevel(loglevels::RESPONSE_TIME) {
-            let nanos = now.elapsed().as_nanos();
-            let micros = nanos / 1_000;
-            let milis = micros / 1_000;
-            let sec = milis / 1_000;
-            let min = sec / 60;
-            let hours = min / 60;
-            let days = hours / 24;
-
-            let mut stamp = String::new();
-            if days > 0 {
-                stamp.push_str(&format!("{days}d"));
-            }
-            if hours > 0 {
-                stamp.push_str(&format!(" {}d", hours % 24));
-            }
-            if min > 0 {
-                stamp.push_str(&format!(" {}m", min % 60));
-            }
-            if sec > 0 {
-                stamp.push_str(&format!(" {}s", sec % 60));
-            }
-            if milis > 0 {
-                stamp.push_str(&format!(" {}ms", milis % 1000));
-            }
-            stamp.push_str(&format!(" {}μs {}ns", micros % 1_000, nanos % 1_000));
-
-            println!("response took {}", &stamp);
-        }
+        
 
         Ok(())
     }

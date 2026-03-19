@@ -362,7 +362,7 @@ dependencies = [
 
 [[package]]
 name = "httprs_core"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "tokio",
 ]
@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "muon"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "async-trait",
  "clap",
