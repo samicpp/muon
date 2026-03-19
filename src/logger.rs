@@ -117,19 +117,20 @@ macro_rules! elog_with_level {
 
 pub mod loglevels {
     pub const INIT_ERROR: u64 = 1 << 0;
+    // pub const SERVER_ERROR: u64 = 1 << 1;
 
-    pub const EXIT: u64 = 1 << 1;
-    pub const CLIENT_DUMP: u64 = 1 << 2;
-    pub const REQUEST: u64 = 1 << 3;
+    pub const EXIT: u64 = 1 << 2;
+    pub const CLIENT_DUMP: u64 = 1 << 3;
+    pub const REQUEST: u64 = 1 << 4;
     
-    pub const RESPONSE: u64 = 1 << 4;
-    pub const RESPONSE_TIME: u64 = 1 << 5;
+    pub const RESPONSE: u64 = 1 << 5;
+    pub const RESPONSE_TIME: u64 = 1 << 6;
 
-    pub const HANDLER_ERROR: u64 = 1 << 6;
-    pub const TLS_UPGRADE_ERROR: u64 = 1 << 7;
-    pub const CONTENT_HANDLER_ERROR: u64 = 1 << 8;
-    pub const HTTP2_ERROR: u64 = 1 << 9;
-    pub const HTTP2_FRAME_DUMP: u64 = 1 << 10;
+    pub const HANDLER_ERROR: u64 = 1 << 7;
+    pub const TLS_UPGRADE_ERROR: u64 = 1 << 8;
+    pub const CONTENT_HANDLER_ERROR: u64 = 1 << 9;
+    pub const HTTP2_ERROR: u64 = 1 << 10;
+    pub const HTTP2_FRAME_DUMP: u64 = 1 << 11;
 }
 
     // Debug = 1,

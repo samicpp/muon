@@ -1,6 +1,3 @@
 [submodule "httplib"]
 	path = httplib
 	url = https://github.com/samicpp/httplib
-[submodule "personal"]
-        path = personal
-        url = https://github.com/samicpp/website-files

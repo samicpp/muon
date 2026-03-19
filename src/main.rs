@@ -131,6 +131,7 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>) -> Option<tokio::task::JoinH
         if let Some(g) = settings.environment.global_queue_interval { rt.global_queue_interval(g); }
         if let Some(d) = settings.environment.thread_keep_alive_ns { rt.thread_keep_alive(Duration::from_nanos(d)); }
         if let Some(s) = settings.environment.thread_stack_size { rt.thread_stack_size(s); }
+        if let Some(b) = settings.environment.max_blocking_threads { rt.max_blocking_threads(b); }
 
         match rt.build() {
             Ok(rt) => {
