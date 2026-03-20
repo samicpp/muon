@@ -18,7 +18,7 @@ pub static H2SETTINGS: Http2Settings = Http2Settings::default_no_push();
 
 
 pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
-    let addresses = args.addresses.as_ref().map(|v| v.as_slice()).unwrap_or(&[]).iter().chain(settings.network.address.get().iter()).collect::<Vec<&String>>();
+    let addresses = args.address.as_ref().map(|v| v.as_slice()).unwrap_or(&[]).iter().chain(settings.network.address.get().iter()).collect::<Vec<&String>>();
 
     let handler = settings.content.handler.as_deref().or(args.handler.as_deref()).unwrap_or("debug");
 

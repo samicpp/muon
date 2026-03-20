@@ -4,7 +4,7 @@ use clap::Parser;
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
     #[arg(short, long, num_args(1..), help = "addresses on which to listen")]
-    pub addresses: Option<Vec<String>>,
+    pub address: Option<Vec<String>>,
 
     #[arg(short = 'A', long, num_args(1..), help = "comma seperated alpns, overrides settings")]
     pub alpn: Option<String>,
