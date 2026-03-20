@@ -37,6 +37,14 @@ fn main() {
         elog_with_level!(loglevels::INIT_ERROR, "couldnt set cwd {}", err.red());
     }
 
+    #[cfg(feature = "aws-lc-rs")]
+    rustls::crypto::aws_lc_rs::default_provider().install_default().expect("couldnt install aws-lc-rs as default provider");
+    #[cfg(feature = "ring")]
+    rustls::crypto::ring::default_provider().install_default().expect("couldnt install ring as default provider");
+    #[cfg(not(any(feature = "ring", feature = "aws-lc-rs")))]
+    compile_error!("need either \"ring\" or \"aws-lc-rs\"");
+
+
 
     let settings = 
     match 

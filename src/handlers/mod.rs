@@ -1,6 +1,8 @@
-#[cfg(debug_assertions)]
+// #[cfg(debug_assertions)]
 pub mod debug;
+#[cfg(feature = "simple")]
 pub mod simple;
+#[cfg(feature = "samicpp")]
 pub mod samicpp;
 pub mod mime_types;
 
@@ -12,7 +14,7 @@ use crate::{DynHttpSocket, servers::GenAddr};
 
 
 #[async_trait::async_trait]
-pub trait HttpHandler{
+pub trait HttpHandler: Send + Sync {
     // fn new(args: Arc<Cli>, settings: Arc<Settings>) -> Self;
     async fn entry(self: Arc<Self>, http: DynHttpSocket, addr: GenAddr) -> Result<(), LibError>;
 }

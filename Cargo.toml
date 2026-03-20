@@ -1,6 +1,6 @@
 [package]
 name = "muon"
-version = "1.1.1"
+version = "1.1.2"
 edition = "2024"
 
 [dependencies]
@@ -12,7 +12,7 @@ toml = "0.9.8"
 
 dashmap = "*"
 
-rustls = { version = "=0.23.37", default-features = false, features = ["aws-lc-rs"] } # TODO: allow selecting ring or aws
+rustls = { version = "=0.23.37", default-features = false, features = [] }
 tokio-rustls = "=0.26.4"
 
 async-trait = "0.1.89"
@@ -20,5 +20,11 @@ owo-colors = "4.3.0"
 phf = { version = "0.13.1", features = ["macros"] }
 
 [features]
-default = ["unix-sockets"]
+default = ["unix-sockets", "simple", "samicpp", "aws-lc-rs"]
+
 unix-sockets = ["httplib/unix-sockets"]
+ring = ["httplib/ring", "rustls/ring"]
+aws-lc-rs = ["httplib/aws-lc-rs", "rustls/aws-lc-rs"]
+
+simple = []
+samicpp = []

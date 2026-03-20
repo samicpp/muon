@@ -7,9 +7,11 @@ use tokio::net::UnixListener;
 use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::{TcpListener, TcpSocket, TcpStream}};
 use tokio_rustls::TlsAcceptor;
 use owo_colors::OwoColorize;
-#[cfg(debug_assertions)]
-use crate::handlers::debug::DebugHandler;
-use crate::{arguments::Cli, elog_with_level, handlers::{HttpHandler, samicpp::SamicppHandler, simple::SimpleHandler}, logger::{check_loglevel, loglevels}, settings::Settings};
+use crate::{arguments::Cli, elog_with_level, handlers::{HttpHandler, debug::DebugHandler}, logger::{check_loglevel, loglevels}, settings::Settings};
+#[cfg(feature = "simple")]
+use crate::handlers::simple::SimpleHandler;
+#[cfg(feature = "samicpp")]
+use crate::handlers::samicpp::SamicppHandler;
 
 
 pub static H2SETTINGS: Http2Settings = Http2Settings::default_no_push();
@@ -18,14 +20,13 @@ pub static H2SETTINGS: Http2Settings = Http2Settings::default_no_push();
 pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
     let addresses = args.addresses.as_ref().map(|v| v.as_slice()).unwrap_or(&[]).iter().chain(settings.network.address.get().iter()).collect::<Vec<&String>>();
 
-    let handler = settings.content.handler.as_deref().or(args.handler.as_deref()).unwrap_or("simple");
+    let handler = settings.content.handler.as_deref().or(args.handler.as_deref()).unwrap_or("debug");
 
-    let handler: Arc<dyn HttpHandler + Send + Sync + 'static> = 
+    let handler: Arc<dyn HttpHandler> = 
     match handler {
-        #[cfg(debug_assertions)]
-        "debug" => Arc::new(DebugHandler),
-        "simple" => Arc::new(SimpleHandler { _args: args.clone(), settings: settings.clone() }),
-        "samicpp" => Arc::new(SamicppHandler::new(args.clone(), settings.clone())),
+        /* #[cfg(debug_assertions)] */ "debug" => Arc::new(DebugHandler),
+        #[cfg(feature = "simple")] "simple" => Arc::new(SimpleHandler { _args: args.clone(), settings: settings.clone() }),
+        #[cfg(feature = "samicpp")] "samicpp" => Arc::new(SamicppHandler::new(args.clone(), settings.clone())),
 
         _ => {
             elog_with_level!(loglevels::INIT_ERROR, "no handler named {} available", handler);
@@ -333,6 +334,7 @@ impl Listener for TcpListener {
         Ok((stream.into(), addr.into()))
     }
 }
+#[cfg(feature = "unix-sockets")]
 impl Listener for UnixListener {
     async fn accept(&self) -> std::io::Result<(DynStream, GenAddr)> {
         let (stream, addr) = self.accept().await?;
@@ -370,7 +372,7 @@ pub fn create_socket<A: std::net::ToSocketAddrs>(addr: A, backlog: u32) -> std::
 pub async fn start_tcp(
     // jhs: &mut Vec<JoinHandle<()>>, 
     listener: TcpListener, 
-    handler: Arc<dyn HttpHandler + Send + Sync + 'static>, 
+    handler: Arc<dyn HttpHandler>, 
     allow_h2c: bool, 
     allow_prior_knowledge: bool, 
     /*peek: bool,*/ 
@@ -398,7 +400,7 @@ pub async fn start_tls(
     // jhs: &mut Vec<JoinHandle<()>>, 
     listener: TcpListener, 
     acceptor: Arc<TlsAcceptor>, 
-    handler: Arc<dyn HttpHandler + Send + Sync + 'static>, 
+    handler: Arc<dyn HttpHandler>, 
     allow_h2c: bool, 
     allow_prior_knowledge: bool, 
     /*peek: bool,*/ 
@@ -432,7 +434,7 @@ pub async fn start_dyn_tls(
     // jhs: &mut Vec<JoinHandle<()>>, 
     listener: TcpListener, 
     acceptor: Arc<TlsAcceptor>, 
-    handler: Arc<dyn HttpHandler + Send + Sync + 'static>, 
+    handler: Arc<dyn HttpHandler>, 
     allow_h2c: bool, 
     allow_prior_knowledge: bool, 
     /*peek: bool,*/ 
@@ -475,7 +477,7 @@ pub async fn dyn_upgrade(tcp: TcpStream, acceptor: Arc<TlsAcceptor>) -> Result<D
     }
 
 }
-pub async fn serve<L: Listener>(listener: L, handler: Arc<dyn HttpHandler + Send + Sync + 'static>, allow_h2c: bool, allow_prior_knowledge: bool, /*peek: bool,*/ assume: Option<HttpVersion>) {
+pub async fn serve<L: Listener>(listener: L, handler: Arc<dyn HttpHandler>, allow_h2c: bool, allow_prior_knowledge: bool, /*peek: bool,*/ assume: Option<HttpVersion>) {
     loop {
         let Ok((stream, addr)) = listener.accept().await else { continue; };
         let handler = handler.clone();
@@ -509,7 +511,7 @@ fn alpn_match(alpn: &[u8]) -> Option<HttpVersion> {
 }
 
 pub async fn handle(
-    handler: Arc<dyn HttpHandler + Send + Sync + 'static>, 
+    handler: Arc<dyn HttpHandler>, 
     
     mut stream: DynStream, 
     addr: GenAddr,
@@ -601,7 +603,7 @@ pub async fn handle(
     Ok(())
 }
 
-pub async fn h2_loop(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, h2: Arc<Http2Session<BufReader<ReadHalf<DynStream>>, WriteHalf<DynStream>>>, addr: GenAddr) -> Result<(), LibError> {
+pub async fn h2_loop(handler: Arc<dyn HttpHandler>, h2: Arc<Http2Session<BufReader<ReadHalf<DynStream>>, WriteHalf<DynStream>>>, addr: GenAddr) -> Result<(), LibError> {
     loop {
         let frame = h2.read_frame().await?;
         if check_loglevel(loglevels::HTTP2_FRAME_DUMP) {
@@ -638,7 +640,7 @@ pub async fn h2_loop(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, h2: 
 
     Ok(())
 }
-pub async fn possible_h2c(handler: Arc<dyn HttpHandler + Send + Sync + 'static>, mut http1: Http1Socket<ReadHalf<DynStream>, WriteHalf<DynStream>>, addr: GenAddr, verover: Option<HttpVersion>) -> Result<(), LibError> {
+pub async fn possible_h2c(handler: Arc<dyn HttpHandler>, mut http1: Http1Socket<ReadHalf<DynStream>, WriteHalf<DynStream>>, addr: GenAddr, verover: Option<HttpVersion>) -> Result<(), LibError> {
     let client = http1.read_until_head_complete().await?;
     
     if 
