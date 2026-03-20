@@ -14,13 +14,21 @@ use crate::handlers::simple::SimpleHandler;
 use crate::handlers::samicpp::SamicppHandler;
 
 
-pub static H2SETTINGS: Http2Settings = Http2Settings::default_no_push();
+pub const DEFAULT_HANDLER: &'static str = if let Some(opt) = option_env!("DEFAULT_HANDLER") { opt } else { "debug" };
+pub const H2SETTINGS: Http2Settings = Http2Settings {
+    header_table_size: None,
+    enable_push: None,
+    max_concurrent_streams: None,
+    initial_window_size: Some(2147483647),
+    max_frame_size: Some(16777215),
+    max_header_list_size: None,
+};
 
 
 pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
     let addresses = args.address.as_ref().map(|v| v.as_slice()).unwrap_or(&[]).iter().chain(settings.network.address.get().iter()).collect::<Vec<&String>>();
 
-    let handler = settings.content.handler.as_deref().or(args.handler.as_deref()).unwrap_or("debug");
+    let handler = settings.content.handler.as_deref().or(args.handler.as_deref()).unwrap_or(DEFAULT_HANDLER);
 
     let handler: Arc<dyn HttpHandler> = 
     match handler {
@@ -391,7 +399,7 @@ pub async fn start_tcp(
             }
             if check_loglevel(loglevels::RESPONSE_TIME) {
                 let stamp = timestamp(now.elapsed());
-                println!("response took {}", &stamp);
+                println!("connection took {}", &stamp);
             }
         });
     }
@@ -425,7 +433,7 @@ pub async fn start_tls(
             }
             if check_loglevel(loglevels::RESPONSE_TIME) {
                 let stamp = timestamp(now.elapsed());
-                println!("response took {}", &stamp);
+                println!("connection took {}", &stamp);
             }
         });
     }
@@ -459,7 +467,7 @@ pub async fn start_dyn_tls(
             }
             if check_loglevel(loglevels::RESPONSE_TIME) {
                 let stamp = timestamp(now.elapsed());
-                println!("response took {}", &stamp);
+                println!("connection took {}", &stamp);
             }
         });
     }
@@ -491,7 +499,7 @@ pub async fn serve<L: Listener>(listener: L, handler: Arc<dyn HttpHandler>, allo
             }
             if check_loglevel(loglevels::RESPONSE_TIME) {
                 let stamp = timestamp(now.elapsed());
-                println!("response took {}", &stamp);
+                println!("connection took {}", &stamp);
             }
         });
     }

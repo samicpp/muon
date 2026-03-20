@@ -3,7 +3,7 @@ use phf::phf_map;
 // source
 // https://github.com/micnic/mime.json/blob/master/index.json
 
-pub const MIME_TYPES: phf::Map<&'static str, &'static str> = phf_map! {
+pub static MIME_TYPES: phf::Map<&'static str, &'static str> = phf_map! {
     "123" => "application/vnd.lotus-1-2-3",
 	"210" => "model/step",
 	"1km" => "application/vnd.1000minds.decision-model+xml",
