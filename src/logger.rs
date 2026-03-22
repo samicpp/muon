@@ -131,8 +131,12 @@ pub mod loglevels {
     pub const CONTENT_HANDLER_ERROR: u64 = 1 << 9;
     pub const HTTP2_ERROR: u64 = 1 << 10;
     pub const HTTP2_FRAME_DUMP: u64 = 1 << 11;
+    pub const IP_DUMP: u64 = 1 << 12;
 
-    pub const SAMICPP_ROUTES_ERROR: u64 = 1 << 12;
+    // samicpp handler
+    pub const ROUTES_ERROR: u64 = 1 << 13;
+    pub const ROUTES_UPDATE: u64 = 1 << 14;
+    pub const ROUTE_DUMP: u64 = 1 << 14;
 }
 
     // Debug = 1,

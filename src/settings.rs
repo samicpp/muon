@@ -134,6 +134,9 @@ pub struct LogSettings {
     pub content_handler_error: Option<bool>,
     pub http2_error: Option<bool>,
     pub http2_frame_dump: Option<bool>,
+    pub routes_error: Option<bool>,
+    pub routes_update: Option<bool>,
+    pub route_dump: Option<bool>,
 }
 
 // #[derive(Debug, Deserialize, Default)]

@@ -1,10 +1,11 @@
-use std::{collections::HashMap, path::Path, sync::{Arc, Mutex}, time::SystemTime};
+use std::{collections::{HashMap, hash_map}, path::Path, sync::{Arc, LazyLock, Mutex, RwLock}, time::SystemTime};
 
 use dashmap::DashMap;
 use http::shared::{HttpSocket, LibError};
+use regex::Regex;
 use serde::Deserialize;
 
-use crate::{AorB, DynHttpSocket, arguments::Cli, elog_with_level, handlers::{HttpHandler, sanitize_path}, logger::{log_client_simple, loglevels}, servers::GenAddr, settings::Settings};
+use crate::{AorB, DynHttpSocket, arguments::Cli, elog_with_level, handlers::{HttpHandler, sanitize_path}, log_with_level, logger::{check_loglevel, log_client_simple, loglevels}, servers::GenAddr, settings::Settings};
 use owo_colors::OwoColorize;
 
 
@@ -22,27 +23,114 @@ pub struct RouteConfig {
     #[serde(alias = "409")]
     pub e409_file: Option<String>,
 }
-
+impl Default for RouteConfig {
+    fn default() -> Self {
+        Self { 
+            match_type: String::new(), 
+            directory: ".".into(), 
+            router: None, 
+            auth: None, 
+            builtin: None, 
+            e404_file: None, 
+            e409_file: None, 
+        }
+    }
+}
 pub struct SamicppHandler {
-    pub _args: Arc<Cli>,
+    pub args: Arc<Cli>,
     pub settings: Arc<Settings>,
 
-    pub config_modified: Mutex<SystemTime>,
-    pub config: Mutex<DashMap<String, RouteConfig>>,
+    pub routes_modified: RwLock<SystemTime>,
+    pub routes: RwLock<HashMap<String, Arc<RouteConfig>>>,
+    pub routes_cache: DashMap<String, Arc<RouteConfig>>,
 }
+/*pub struct RoutesStored {
+    pub config: Mutex<HashMap<String, Arc<RouteConfig>>>,
+}
+impl RoutesStored {
+    pub fn new(map: HashMap<String, RouteConfig>) -> Self {
+        let mut nmap = HashMap::new();
+        
+        for (k, v) in map {
+            nmap.insert(k, Arc::new(v));
+        }
+
+        Self {
+            config: Mutex::new(nmap),
+        }
+    }
+    pub fn get()
+}
+impl std::ops::Index<&str> for RoutesStored {
+    type Output = Arc<RouteConfig>;
+    fn index(&self, index: &str) -> &Self::Output {
+
+    }
+}// */
+
+pub static DOMAIN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"([a-z|0-9|\-]+\.)?([a-z|0-9|\-]+)(?=:|$)").expect("domain regex invalid"));
+
 #[async_trait::async_trait]
 impl HttpHandler for SamicppHandler {
-    async fn entry(self: Arc<Self>, mut http: DynHttpSocket, addr: GenAddr) -> Result<(), LibError> {
-        let client = http.read_until_head_complete().await?;
+    async fn entry(self: Arc<Self>, mut http: DynHttpSocket, addr: GenAddr, is_secure: bool) -> Result<(), LibError> {
+        log_with_level!(loglevels::IP_DUMP, "{}", &addr);
+        http.read_until_head_complete().await?;
+        let client = http.get_client();
         log_client_simple(client);
         let path = sanitize_path(&client.path);
         let path_str = path.as_os_str().to_string_lossy();
+        let host = client.host.as_deref().unwrap_or("about:blank");
+        let fullhost = format!("{}://{}{}", if is_secure { "http" } else { "https" }, host, &path_str);
+        let pfullhost = format!("[{}]{}", client.version, &fullhost);
+        let domain = DOMAIN.find(host).map(|h| h.as_str()).unwrap_or(host);
         
         match self.update_config().await {
-            Err(AorB::A(err)) => elog_with_level!(loglevels::SAMICPP_ROUTES_ERROR, "config I/O err {}", err.red()),
-            Err(AorB::B(err)) => elog_with_level!(loglevels::SAMICPP_ROUTES_ERROR, "config json err {}", err.red()),
-            _ => {}
+            Err(AorB::A(err)) => elog_with_level!(loglevels::ROUTES_ERROR, "config I/O err {}", err.red()),
+            Err(AorB::B(err)) => elog_with_level!(loglevels::ROUTES_ERROR, "config json err {}", err.red()),
+            Ok(true) => log_with_level!(loglevels::ROUTES_UPDATE, "routes updated"),
+            Ok(false) => {},
         }
+
+        let mut route = None;
+        let default = 
+        if let Some(def) = self.routes_cache.get("default") { def.clone() }
+        else {
+            elog_with_level!(loglevels::ROUTES_ERROR, "no default entry");
+            Arc::new(RouteConfig::default())
+        };
+        if let Some(conf) = self.routes_cache.get(&pfullhost) {
+            route = Some(conf.clone());
+        }
+        else {
+            let routes = self.routes.read().unwrap();
+            for (label, opt) in routes.iter() {
+                let label = label.as_str();
+                if 
+                    (opt.match_type == "host"       && host.eq_ignore_ascii_case(label)                                                                            ) ||
+                    (opt.match_type == "start"      && fullhost.get(..label.len()).map(|h: &str| h.eq_ignore_ascii_case(label)).unwrap_or(false)                   ) ||
+                    (opt.match_type == "end"        && fullhost.get(fullhost.len() - label.len()..).map(|h: &str| h.eq_ignore_ascii_case(label)).unwrap_or(false)  ) ||
+                    (opt.match_type == "regex"      && Regex::new(label).map(|r: Regex| r.is_match(&fullhost)).unwrap_or(false)                                    ) ||
+                    (opt.match_type == "path-start" && path_str.get(..label.len()).map(|h: &str| h.eq_ignore_ascii_case(label)).unwrap_or(false)                   ) ||
+                    (opt.match_type == "scheme"     && (is_secure && label.eq_ignore_ascii_case("https") || !is_secure && label.eq_ignore_ascii_case("http"))      ) ||
+                    (opt.match_type == "protocol"   && client.version.to_string().eq_ignore_ascii_case(label)                                                      ) ||
+                    (opt.match_type == "type"       && http.get_type().to_string().eq_ignore_ascii_case(label)                                                     ) ||
+                    (opt.match_type == "domain"     && domain.eq_ignore_ascii_case(label)                                                                          )
+                {
+                    if check_loglevel(loglevels::ROUTE_DUMP) {
+                        println!("{} {:#?}", label, opt);
+                    }
+                    route = Some(opt.clone());
+                    break;
+                }
+            }
+            drop(routes);
+
+            if let Some(route) = route {
+                self.routes_cache.insert(pfullhost, route.clone());
+            }
+        }
+        
+
 
         Ok(())
     }
@@ -50,20 +138,40 @@ impl HttpHandler for SamicppHandler {
 impl SamicppHandler {
     pub fn new(args: Arc<Cli>, settings: Arc<Settings>) -> Self {
         Self { 
-            _args: args, 
+            args, 
             settings, 
-            config_modified: Mutex::new(SystemTime::UNIX_EPOCH),
-            config: Mutex::new(DashMap::new()),
+            routes_modified: RwLock::new(SystemTime::UNIX_EPOCH),
+            routes: RwLock::new(HashMap::new()),
+            routes_cache: DashMap::new(),
         }
     }
 
     async fn update_config(&self) -> Result<bool, AorB<std::io::Error, serde_json::Error>> {
-        let routes = Path::new(&self.settings.content.serve_dir).join(self.settings.content.routes_name.as_deref().unwrap_or("routes.json"));
+        let routes = Path::new(&self.settings.content.serve_dir).join(self.args.routes.as_deref().or(self.settings.content.routes_name.as_deref()).unwrap_or("routes.json"));
         if let Ok(meta) = routes.metadata() {
             let modified = meta.modified().map_err(|e| AorB::A(e))?;
-            if *self.config_modified.lock().unwrap() < modified {
+            if *self.routes_modified.read().unwrap() < modified {
                 let file = tokio::fs::read(&routes).await.map_err(|e| AorB::A(e))?;
-                *self.config.lock().unwrap() = serde_json::de::from_slice(&file).map_err(|e| AorB::B(e))?;
+                
+                let map: HashMap<String, RouteConfig> = serde_json::de::from_slice(&file).map_err(|e| AorB::B(e))?;
+                #[cfg(debug_assertions)] dbg!(&map);
+                
+                let mut nmap = HashMap::new();
+                for (k, v) in map {
+                    nmap.insert(k, Arc::new(v));
+                }
+
+
+                let mut omod = self.routes_modified.write().unwrap();
+                let mut omap = self.routes.write().unwrap();
+                
+                if let Some(def) = nmap.get("default") { self.routes_cache.insert("default".into(), def.clone()); }
+                self.routes_cache.clear();
+                
+                *omod = modified;
+                *omap = nmap;
+
+
                 Ok(true)
             }
             else {

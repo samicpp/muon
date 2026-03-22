@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc, time::{Duration, Instant}};
+use std::{fmt::Display, net::SocketAddr, sync::Arc, time::{Duration, Instant}};
 
 use http::{extra::PolyHttpSocket, ffihttp::{DynStream, PROVIDER, servers::TlsCertSelector}, http1::server::Http1Socket, http2::{core::Http2Settings, server::Http2Socket, session::Http2Session}, shared::{HttpMethod, HttpType, HttpVersion, LibError}};
 use rustls::{pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject}, sign::CertifiedKey};
@@ -332,6 +332,15 @@ impl From<tokio::net::unix::SocketAddr> for GenAddr {
         Self::Unix(value)
     }
 }
+impl Display for GenAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Net(ip) => write!(f, "{}", ip),
+            #[cfg(feature = "unix-sockets")]
+            Self::Unix(loc) => write!(f, "{:?}", loc),
+        }
+    }
+}
 
 pub trait Listener {
     async fn accept(&self) -> std::io::Result<(DynStream, GenAddr)>;
@@ -539,17 +548,21 @@ pub async fn handle(
         _ => 0,
     };
 
+    let mut secure = false;
     let assume =
     match &stream {
         DynStream::TlsDuplex(tls) => {
+            secure = true;
             let (_, info) = tls.get_ref();
             alpn_match(info.alpn_protocol().unwrap_or(&[]))
         },
         DynStream::TcpTls(tls) => {
+            secure = true;
             let (_, info) = tls.get_ref();
             alpn_match(info.alpn_protocol().unwrap_or(&[]))
         },
         DynStream::UnixTls(tls) => {
+            secure = true;
             let (_, info) = tls.get_ref();
             alpn_match(info.alpn_protocol().unwrap_or(&[]))
         },
@@ -563,13 +576,13 @@ pub async fn handle(
                 let http2 = Arc::new(Http2Session::new_buf_server(stream, 8 * 1024));
                 http2.read_preface().await?; // TODO: send protocol violation if false
                 http2.send_settings(H2SETTINGS).await?;
-                h2_loop(handler, http2, addr).await?;
+                h2_loop(handler, http2, addr, secure).await?;
             },
             _ => {
                 let http1 = Http1Socket::new(stream, 8 * 1024);
-                if allow_h2c { possible_h2c(handler, http1, addr, assume).await?; }
+                if allow_h2c { possible_h2c(handler, http1, addr, assume, secure).await?; }
                 else {
-                    match handler.entry(http1.into(), addr).await {
+                    match handler.entry(http1.into(), addr, secure).await {
                         Ok(()) => {},
                         Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
                     };
@@ -581,7 +594,7 @@ pub async fn handle(
         let h2 = Arc::new(Http2Session::new_buf_server(DynStream::from(stream), 8 * 1024));
         h2.read_preface().await?;
         h2.send_settings(H2SETTINGS).await?;
-        h2_loop(handler, h2, addr).await?;
+        h2_loop(handler, h2, addr, secure).await?;
     }
     else {
         let mut http1 = Http1Socket::new(stream, 8 * 1024);
@@ -595,13 +608,13 @@ pub async fn handle(
         {
             let http2 = Arc::new(http1.http2_prior_knowledge().await?);
             http2.send_settings(H2SETTINGS).await?;
-            h2_loop(handler, http2, addr).await?;
+            h2_loop(handler, http2, addr, secure).await?;
         }
 
-        else if allow_h2c { possible_h2c(handler, http1, addr, None).await?; }
+        else if allow_h2c { possible_h2c(handler, http1, addr, None, secure).await?; }
         else {
             http1.set_header("Connection", "close");
-            match handler.entry(http1.into(), addr).await {
+            match handler.entry(http1.into(), addr, secure).await {
                 Ok(()) => {},
                 Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
             }
@@ -611,7 +624,7 @@ pub async fn handle(
     Ok(())
 }
 
-pub async fn h2_loop(handler: Arc<dyn HttpHandler>, h2: Arc<Http2Session<BufReader<ReadHalf<DynStream>>, WriteHalf<DynStream>>>, addr: GenAddr) -> Result<(), LibError> {
+pub async fn h2_loop(handler: Arc<dyn HttpHandler>, h2: Arc<Http2Session<BufReader<ReadHalf<DynStream>>, WriteHalf<DynStream>>>, addr: GenAddr, is_secure: bool) -> Result<(), LibError> {
     loop {
         let frame = h2.read_frame().await?;
         if check_loglevel(loglevels::HTTP2_FRAME_DUMP) {
@@ -624,7 +637,7 @@ pub async fn h2_loop(handler: Arc<dyn HttpHandler>, h2: Arc<Http2Session<BufRead
                 let addr = addr.clone();
 
                 tokio::spawn(async move {
-                    match hand.entry(http, addr).await {
+                    match hand.entry(http, addr, is_secure).await {
                         Ok(()) => (),
                         Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
                     }
@@ -648,7 +661,7 @@ pub async fn h2_loop(handler: Arc<dyn HttpHandler>, h2: Arc<Http2Session<BufRead
 
     Ok(())
 }
-pub async fn possible_h2c(handler: Arc<dyn HttpHandler>, mut http1: Http1Socket<ReadHalf<DynStream>, WriteHalf<DynStream>>, addr: GenAddr, verover: Option<HttpVersion>) -> Result<(), LibError> {
+pub async fn possible_h2c(handler: Arc<dyn HttpHandler>, mut http1: Http1Socket<ReadHalf<DynStream>, WriteHalf<DynStream>>, addr: GenAddr, verover: Option<HttpVersion>, is_secure: bool) -> Result<(), LibError> {
     let client = http1.read_until_head_complete().await?;
     
     if 
@@ -664,17 +677,17 @@ pub async fn possible_h2c(handler: Arc<dyn HttpHandler>, mut http1: Http1Socket<
         let adr = addr.clone();
 
         tokio::spawn(async move {
-            match hand.entry(http, adr).await {
+            match hand.entry(http, adr, is_secure).await {
                 Ok(()) => (),
                 Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
             }
         });
 
-        h2_loop(handler, h2c, addr).await?;
+        h2_loop(handler, h2c, addr, is_secure).await?;
     }
     else {
         http1.version_override = verover;
-        handler.entry(http1.into(), addr).await?;
+        handler.entry(http1.into(), addr, is_secure).await?;
     }
 
     Ok(())

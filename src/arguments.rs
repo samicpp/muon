@@ -23,4 +23,7 @@ pub struct Cli {
 
     #[arg(long, short, help = "sets the loglevel, overrides settings")]
     pub loglevel: Option<u64>,
+
+    #[arg(long, help = "sets the filename of the routes, overrides settings")]
+    pub routes: Option<String>,
 }

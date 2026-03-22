@@ -69,7 +69,7 @@ fn main() {
             |preset| match preset {
                 "all" | "everything" | "*" => u64::MAX,
                 "nececities" | "needed" | "-" => loglevels::INIT_ERROR | loglevels::REQUEST,
-                "verbose" | "+" => loglevels::INIT_ERROR | loglevels::REQUEST | loglevels::EXIT | loglevels::RESPONSE | loglevels::CONTENT_HANDLER_ERROR,
+                "verbose" | "+" => loglevels::INIT_ERROR | loglevels::REQUEST | loglevels::EXIT | loglevels::RESPONSE | loglevels::CONTENT_HANDLER_ERROR | loglevels::ROUTES_ERROR,
                 _ => LOGLEVEL.load(std::sync::atomic::Ordering::Relaxed),
             }
         )) {
@@ -85,6 +85,9 @@ fn main() {
         match settings.logging.content_handler_error { Some(true) => lvl |= loglevels::CONTENT_HANDLER_ERROR, Some(false) => lvl &= !loglevels::CONTENT_HANDLER_ERROR, None => {} }
         match settings.logging.http2_error { Some(true) => lvl |= loglevels::HTTP2_ERROR, Some(false) => lvl &= !loglevels::HTTP2_ERROR, None => {} }
         match settings.logging.http2_frame_dump { Some(true) => lvl |= loglevels::HTTP2_FRAME_DUMP, Some(false) => lvl &= !loglevels::HTTP2_FRAME_DUMP, None => {} }
+        match settings.logging.routes_error { Some(true) => lvl |= loglevels::ROUTES_ERROR, Some(false) => lvl &= !loglevels::ROUTES_ERROR, None => {} }
+        match settings.logging.routes_update { Some(true) => lvl |= loglevels::ROUTES_UPDATE, Some(false) => lvl &= !loglevels::ROUTES_UPDATE, None => {} }
+        match settings.logging.route_dump { Some(true) => lvl |= loglevels::ROUTE_DUMP, Some(false) => lvl &= !loglevels::ROUTE_DUMP, None => {} }
 
         LOGLEVEL.swap(lvl, std::sync::atomic::Ordering::Relaxed);
     }

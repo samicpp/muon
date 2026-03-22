@@ -12,7 +12,7 @@ pub struct SimpleHandler {
 }
 #[async_trait::async_trait]
 impl HttpHandler for SimpleHandler{
-    async fn entry(self: Arc<Self>, mut http: DynHttpSocket, addr: GenAddr) -> Result<(), LibError> {
+    async fn entry(self: Arc<Self>, mut http: DynHttpSocket, addr: GenAddr, _is_secure: bool) -> Result<(), LibError> {
         let client = http.read_until_head_complete().await?;
         let path = Path::new(&self.settings.content.serve_dir).join(sanitize_path(&client.path));
 
