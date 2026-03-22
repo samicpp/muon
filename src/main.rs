@@ -13,7 +13,7 @@ use http::{extra::PolyHttpSocket, ffihttp::DynStream, httprs_core::ffi::own::RT}
 use tokio::io::{ReadHalf, WriteHalf};
 use owo_colors::OwoColorize;
 
-use crate::{arguments::Cli, logger::{LOGLEVEL, loglevels}, servers::start_servers, settings::Settings};
+use crate::{arguments::Cli, logger::{get_loglevel, loglevels, set_loglevel}, servers::start_servers, settings::Settings};
 
 // pub static PROVIDER: LazyLock<Arc<CryptoProvider>> = LazyLock::new(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
 // pub static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -26,7 +26,7 @@ fn main() {
     let spfallback = "./".to_owned() + &sname;
 
     if let Some(lvl) = args.loglevel {
-        LOGLEVEL.swap(lvl, std::sync::atomic::Ordering::Relaxed);
+        set_loglevel(lvl);
     }
 
 
@@ -70,7 +70,7 @@ fn main() {
                 "all" | "everything" | "*" => u64::MAX,
                 "nececities" | "needed" | "-" => loglevels::INIT_ERROR | loglevels::REQUEST,
                 "verbose" | "+" => loglevels::INIT_ERROR | loglevels::REQUEST | loglevels::EXIT | loglevels::RESPONSE | loglevels::CONTENT_HANDLER_ERROR | loglevels::ROUTES_ERROR,
-                _ => LOGLEVEL.load(std::sync::atomic::Ordering::Relaxed),
+                _ => get_loglevel(),
             }
         )) {
         
@@ -89,7 +89,7 @@ fn main() {
         match settings.logging.routes_update { Some(true) => lvl |= loglevels::ROUTES_UPDATE, Some(false) => lvl &= !loglevels::ROUTES_UPDATE, None => {} }
         match settings.logging.route_dump { Some(true) => lvl |= loglevels::ROUTE_DUMP, Some(false) => lvl &= !loglevels::ROUTE_DUMP, None => {} }
 
-        LOGLEVEL.swap(lvl, std::sync::atomic::Ordering::Relaxed);
+        set_loglevel(lvl);
     }
 
 
@@ -118,7 +118,14 @@ enum AorB<A, B>{
     A(A),
     B(B),
 }
-
+impl<A: std::fmt::Debug, B: std::fmt::Debug> std::fmt::Debug for AorB<A, B> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::A(a) => f.debug_tuple("A").field(a).finish(),
+            Self::B(b) => f.debug_tuple("B").field(b).finish(),
+        }
+    }
+}
 
 fn process(args: Arc<Cli>, settings: Arc<Settings>) -> Option<tokio::task::JoinHandle<()>> {
     #[cfg(debug_assertions)] dbg!(&args);

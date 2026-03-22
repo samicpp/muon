@@ -71,6 +71,12 @@ pub fn log_client_simple(client: &HttpClient) -> String {
 pub fn check_loglevel<N: Into<u64>>(level: N) -> bool {
     (LOGLEVEL.load(std::sync::atomic::Ordering::Relaxed) & level.into()) != 0
 }
+pub fn get_loglevel() -> u64 {
+    LOGLEVEL.load(std::sync::atomic::Ordering::Relaxed)
+}
+pub fn set_loglevel<N: Into<u64>>(level: N) {
+    LOGLEVEL.store(level.into(), std::sync::atomic::Ordering::Relaxed);
+}
 
 #[macro_export]
 macro_rules! log_with_level {
@@ -136,7 +142,9 @@ pub mod loglevels {
     // samicpp handler
     pub const ROUTES_ERROR: u64 = 1 << 13;
     pub const ROUTES_UPDATE: u64 = 1 << 14;
-    pub const ROUTE_DUMP: u64 = 1 << 14;
+    pub const ROUTE_DUMP: u64 = 1 << 15;
+
+    pub const HTTP_ERRORS: u64 = 1 << 16;
 }
 
     // Debug = 1,

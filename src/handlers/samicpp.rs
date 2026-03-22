@@ -1,7 +1,7 @@
 use std::{collections::{HashMap, hash_map}, path::Path, sync::{Arc, LazyLock, Mutex, RwLock}, time::SystemTime};
 
 use dashmap::DashMap;
-use http::shared::{HttpSocket, LibError};
+use http::shared::{HttpSocket, LibError, LibResult};
 use regex::Regex;
 use serde::Deserialize;
 
@@ -44,29 +44,6 @@ pub struct SamicppHandler {
     pub routes: RwLock<HashMap<String, Arc<RouteConfig>>>,
     pub routes_cache: DashMap<String, Arc<RouteConfig>>,
 }
-/*pub struct RoutesStored {
-    pub config: Mutex<HashMap<String, Arc<RouteConfig>>>,
-}
-impl RoutesStored {
-    pub fn new(map: HashMap<String, RouteConfig>) -> Self {
-        let mut nmap = HashMap::new();
-        
-        for (k, v) in map {
-            nmap.insert(k, Arc::new(v));
-        }
-
-        Self {
-            config: Mutex::new(nmap),
-        }
-    }
-    pub fn get()
-}
-impl std::ops::Index<&str> for RoutesStored {
-    type Output = Arc<RouteConfig>;
-    fn index(&self, index: &str) -> &Self::Output {
-
-    }
-}// */
 
 pub static DOMAIN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"([a-z|0-9|\-]+\.)?([a-z|0-9|\-]+)(?=:|$)").expect("domain regex invalid"));
 
@@ -125,11 +102,28 @@ impl HttpHandler for SamicppHandler {
             }
             drop(routes);
 
-            if let Some(route) = route {
+            if let Some(route) = &route {
                 self.routes_cache.insert(pfullhost, route.clone());
             }
         }
         
+        let route = route.unwrap_or(default);
+        let fin_path = Path::new(&self.settings.content.serve_dir).join(&route.directory).join(&path);
+
+        if let Some(router) = route.router.as_deref() { 
+            let router = Path::new(&self.settings.content.serve_dir).join(&route.directory).join(router);
+            if !router.exists() {
+                self.error(&mut http, 404, &path, &router, "reason", "detail").await?;
+            }
+            else if !router.is_file() {
+                self.error(&mut http, 501, &path, &router, "router is not a file", "detail").await?;
+            }
+            else {
+                self.file_handler(&mut http, &route, &path, &router, &fin_path).await?;
+            }
+        } else {
+            self.dir_or_file(&mut http, &route, &path, &fin_path, &fin_path).await?;
+        };
 
 
         Ok(())
@@ -155,7 +149,7 @@ impl SamicppHandler {
                 
                 let map: HashMap<String, RouteConfig> = serde_json::de::from_slice(&file).map_err(|e| AorB::B(e))?;
                 #[cfg(debug_assertions)] dbg!(&map);
-                
+
                 let mut nmap = HashMap::new();
                 for (k, v) in map {
                     nmap.insert(k, Arc::new(v));
@@ -181,5 +175,93 @@ impl SamicppHandler {
         else {
             Ok(false)
         }
+    }
+
+    async fn error(&self, http: &mut DynHttpSocket, code: u16, path: &Path, target_path: &Path, reason: &str, detail: &str) -> LibResult<()> { 
+        http.set_header("Content-Type", "text/plain");
+
+        if check_loglevel(loglevels::HTTP_ERRORS) {
+            println!("{code} {reason}");
+        }
+
+        match code {
+            400 => {
+                log_with_level!(loglevels::HTTP_ERRORS, "400 bad request");
+                http.set_status(code, "Bad Request".into());
+                http.close(b"broken request").await?;
+            }
+            404 => {
+                log_with_level!(loglevels::HTTP_ERRORS, "404 not found {target_path:?}");
+                http.set_status(code, "Not Found".into());
+                http.close(format!("couldnt find {path:?}").as_bytes()).await?;
+            }
+            409 => {
+                log_with_level!(loglevels::HTTP_ERRORS, "409 conflict {target_path:?} {reason}");
+                http.set_status(code, "Conflict".into());
+                http.close(format!("something went wrong. {reason}").as_bytes()).await?;
+            }
+
+            500 => {
+                log_with_level!(loglevels::HTTP_ERRORS, "500 internal server error");
+                log_with_level!(loglevels::HTTP_ERRORS, "{}: {}", reason.red(), detail.red());
+                http.set_status(code, "Internal Server Error".into());
+                http.close(format!("something went wrong\r\n{reason}").as_bytes()).await?;
+            }
+            501 => {
+                log_with_level!(loglevels::HTTP_ERRORS, "501 unimplemented");
+                http.set_status(code, "Not Implemented".into());
+                http.close(b"").await?;
+            }
+
+            _ => {
+                log_with_level!(loglevels::HTTP_ERRORS, "{code} {reason}");
+                http.set_status(code, "Error".into());
+                http.close(format!("{reason} {detail}").as_bytes()).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    #[inline]
+    async fn dir_or_file(&self, http: &mut DynHttpSocket, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> {
+        if file_path.is_file() {
+            self.file_handler(http, conf, path, file_path, real_path).await
+        }
+        else if file_path.is_dir() {
+            self.dir_handler(http, conf, path, file_path, real_path).await
+        }
+        else {
+            self.error(http, 501, path, file_path, "reason", "detail").await
+        }
+    }
+    async fn dir_handler(&self, http: &mut DynHttpSocket, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> { 
+        let name = file_path.file_name().map(|s| s.to_string_lossy()).unwrap_or("index".into());
+
+        let mut found = None;
+        let mut dir = tokio::fs::read_dir(&file_path).await?;
+        while let Some(file) = dir.next_entry().await? {
+            if 
+                file.metadata().await.map(|m| m.is_file()).unwrap_or(false) && 
+                (
+                    file.file_name().to_string_lossy().starts_with(name.as_ref()) || 
+                    file.file_name().to_string_lossy().starts_with("index")
+                ) 
+            {
+                found = Some(file);
+                break;
+            }
+        }
+
+        if let Some(found) = found {
+            self.file_handler(http, conf, path, &found.path(), real_path).await
+        } 
+        else {
+            self.error(http, 409, path, file_path, "no files found", "detail").await
+        }
+    }
+    async fn file_handler(&self, http: &mut DynHttpSocket, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> { 
+
+        unimplemented!()
     }
 }

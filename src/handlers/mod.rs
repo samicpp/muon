@@ -13,6 +13,20 @@ use http::shared::LibError;
 use crate::{DynHttpSocket, servers::GenAddr};
 
 
+// #[derive(Debug, Clone)]
+// pub struct TlsInfo {
+//     alpn: Option<Vec<u8>>,
+//     sni: Option<String>,
+// }
+// impl From<&rustls::ServerConnection> for TlsInfo {
+//     fn from(value: &rustls::ServerConnection) -> Self {
+//         Self {
+//             alpn: value.alpn_protocol().map(|e| e.to_vec()),
+//             sni: value.server_name().map(|s| s.to_owned()),
+//         }
+//     }
+// }
+
 #[async_trait::async_trait]
 pub trait HttpHandler: Send + Sync {
     // fn new(args: Arc<Cli>, settings: Arc<Settings>) -> Self;
