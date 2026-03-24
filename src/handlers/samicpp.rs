@@ -12,7 +12,7 @@ use owo_colors::OwoColorize;
 #[derive(Debug, Deserialize)]
 pub struct RouteConfig {
     #[serde(alias = "match-type")]
-    pub match_type: String,
+    pub match_type: MatchType,
     #[serde(alias = "dir")]
     pub directory: String,
     pub router: Option<String>,
@@ -22,19 +22,35 @@ pub struct RouteConfig {
     pub e404_file: Option<String>,
     #[serde(alias = "409")]
     pub e409_file: Option<String>,
+    #[serde(skip)]
+    pub regex: Option<Regex>,
 }
 impl Default for RouteConfig {
     fn default() -> Self {
         Self { 
-            match_type: String::new(), 
+            match_type: MatchType::Host, 
             directory: ".".into(), 
             router: None, 
             auth: None, 
             builtin: None, 
             e404_file: None, 
             e409_file: None, 
+            regex: None,
         }
     }
+}
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum MatchType {
+    Host,
+    Start,
+    End,
+    Regex,
+    PathStart,
+    Scheme,
+    Protocol,
+    Type,
+    Domain,
 }
 pub struct SamicppHandler {
     pub args: Arc<Cli>,
@@ -46,6 +62,29 @@ pub struct SamicppHandler {
 }
 
 pub static DOMAIN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"([a-z|0-9|\-]+\.)?([a-z|0-9|\-]+)(?=:|$)").expect("domain regex invalid"));
+
+fn starts_with_case_insensitive<A: AsRef<str>, B: AsRef<str>>(haystack: A, needle: B) -> bool {
+    let haystack = haystack.as_ref();
+    let needle = needle.as_ref();
+
+    if needle.len() <= haystack.len() {
+        haystack.get(..needle.len()).map(|h: &str| h.eq_ignore_ascii_case(needle)).unwrap_or(false)
+    }
+    else {
+        false
+    }
+}
+fn ends_with_case_insensitive<A: AsRef<str>, B: AsRef<str>>(haystack: A, needle: B) -> bool {
+    let haystack = haystack.as_ref();
+    let needle = needle.as_ref();
+
+    if needle.len() <= haystack.len() {
+        haystack.get(haystack.len() - needle.len()..).map(|h: &str| h.eq_ignore_ascii_case(needle)).unwrap_or(false)
+    }
+    else {
+        false
+    }
+}
 
 #[async_trait::async_trait]
 impl HttpHandler for SamicppHandler {
@@ -83,15 +122,15 @@ impl HttpHandler for SamicppHandler {
             for (label, opt) in routes.iter() {
                 let label = label.as_str();
                 if 
-                    (opt.match_type == "host"       && host.eq_ignore_ascii_case(label)                                                                            ) ||
-                    (opt.match_type == "start"      && fullhost.get(..label.len()).map(|h: &str| h.eq_ignore_ascii_case(label)).unwrap_or(false)                   ) ||
-                    (opt.match_type == "end"        && fullhost.get(fullhost.len() - label.len()..).map(|h: &str| h.eq_ignore_ascii_case(label)).unwrap_or(false)  ) ||
-                    (opt.match_type == "regex"      && Regex::new(label).map(|r: Regex| r.is_match(&fullhost)).unwrap_or(false)                                    ) ||
-                    (opt.match_type == "path-start" && path_str.get(..label.len()).map(|h: &str| h.eq_ignore_ascii_case(label)).unwrap_or(false)                   ) ||
-                    (opt.match_type == "scheme"     && (is_secure && label.eq_ignore_ascii_case("https") || !is_secure && label.eq_ignore_ascii_case("http"))      ) ||
-                    (opt.match_type == "protocol"   && client.version.to_string().eq_ignore_ascii_case(label)                                                      ) ||
-                    (opt.match_type == "type"       && http.get_type().to_string().eq_ignore_ascii_case(label)                                                     ) ||
-                    (opt.match_type == "domain"     && domain.eq_ignore_ascii_case(label)                                                                          )
+                    (opt.match_type == MatchType::Host       && host.eq_ignore_ascii_case(label)                                                                            ) ||
+                    (opt.match_type == MatchType::Start      && starts_with_case_insensitive(&fullhost, label)                                                              ) ||
+                    (opt.match_type == MatchType::End        && ends_with_case_insensitive(&fullhost, label)                                                                ) ||
+                    (opt.match_type == MatchType::Regex      && opt.regex.as_ref().map(|r: &Regex| r.is_match(&fullhost)).unwrap_or(false)                                  ) ||
+                    (opt.match_type == MatchType::PathStart && starts_with_case_insensitive(&path_str, label)                                                              ) ||
+                    (opt.match_type == MatchType::Scheme     && (is_secure && label.eq_ignore_ascii_case("https") || !is_secure && label.eq_ignore_ascii_case("http"))      ) ||
+                    (opt.match_type == MatchType::Protocol   && client.version.to_string().eq_ignore_ascii_case(label)                                                      ) ||
+                    (opt.match_type == MatchType::Type       && http.get_type().to_string().eq_ignore_ascii_case(label)                                                     ) ||
+                    (opt.match_type == MatchType::Domain     && domain.eq_ignore_ascii_case(label)                                                                          )
                 {
                     if check_loglevel(loglevels::ROUTE_DUMP) {
                         println!("{} {:#?}", label, opt);
@@ -151,7 +190,10 @@ impl SamicppHandler {
                 #[cfg(debug_assertions)] dbg!(&map);
 
                 let mut nmap = HashMap::new();
-                for (k, v) in map {
+                for (k, mut v) in map {
+                    if v.match_type == MatchType::Regex {
+                        v.regex = Regex::new(&k).ok();
+                    }
                     nmap.insert(k, Arc::new(v));
                 }
 
@@ -159,8 +201,8 @@ impl SamicppHandler {
                 let mut omod = self.routes_modified.write().unwrap();
                 let mut omap = self.routes.write().unwrap();
                 
-                if let Some(def) = nmap.get("default") { self.routes_cache.insert("default".into(), def.clone()); }
                 self.routes_cache.clear();
+                if let Some(def) = nmap.get("default") { self.routes_cache.insert("default".into(), def.clone()); }
                 
                 *omod = modified;
                 *omap = nmap;
