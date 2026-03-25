@@ -1,8 +1,8 @@
 // #[cfg(debug_assertions)]
 pub mod debug;
-#[cfg(feature = "simple")]
+#[cfg(feature = "handler-simple")]
 pub mod simple;
-#[cfg(feature = "samicpp")]
+#[cfg(feature = "handler-samicpp")]
 pub mod samicpp;
 pub mod mime_types;
 

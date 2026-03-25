@@ -8,9 +8,9 @@ use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::{TcpListener, TcpSocket, 
 use tokio_rustls::TlsAcceptor;
 use owo_colors::OwoColorize;
 use crate::{arguments::Cli, elog_with_level, handlers::{HttpHandler, debug::DebugHandler}, logger::{check_loglevel, loglevels}, settings::Settings};
-#[cfg(feature = "simple")]
+#[cfg(feature = "handler-simple")]
 use crate::handlers::simple::SimpleHandler;
-#[cfg(feature = "samicpp")]
+#[cfg(feature = "handler-samicpp")]
 use crate::handlers::samicpp::SamicppHandler;
 
 
@@ -33,8 +33,8 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
     let handler: Arc<dyn HttpHandler> = 
     match handler {
         /* #[cfg(debug_assertions)] */ "debug" => Arc::new(DebugHandler),
-        #[cfg(feature = "simple")] "simple" => Arc::new(SimpleHandler { _args: args.clone(), settings: settings.clone() }),
-        #[cfg(feature = "samicpp")] "samicpp" => Arc::new(SamicppHandler::new(args.clone(), settings.clone())),
+        #[cfg(feature = "handler-simple")] "simple" => Arc::new(SimpleHandler { _args: args.clone(), settings: settings.clone() }),
+        #[cfg(feature = "handler-samicpp")] "samicpp" => Arc::new(SamicppHandler::new(args.clone(), settings.clone())),
 
         _ => {
             elog_with_level!(loglevels::INIT_ERROR, "no handler named {} available", handler);

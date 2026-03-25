@@ -74,7 +74,7 @@ dependencies = [
 
 [[package]]
 name = "asyncffi"
-version = "3.4.0"
+version = "3.4.1"
 dependencies = [
  "dashmap",
  "http",
@@ -439,7 +439,7 @@ dependencies = [
 
 [[package]]
 name = "muon"
-version = "1.2.8"
+version = "1.2.9"
 dependencies = [
  "async-trait",
  "clap",
