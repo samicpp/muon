@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, hash_map}, path::Path, sync::{Arc, LazyLock, Mutex, RwLock}, time::SystemTime};
+use std::{collections::HashMap, path::Path, sync::{Arc, LazyLock, RwLock}, time::SystemTime};
 
 use dashmap::DashMap;
 use http::shared::{HttpSocket, LibError, LibResult};
@@ -39,7 +39,7 @@ impl Default for RouteConfig {
         }
     }
 }
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "kebab-case")]
 pub enum MatchType {
     Host,
@@ -96,7 +96,7 @@ impl HttpHandler for SamicppHandler {
         let path = sanitize_path(&client.path);
         let path_str = path.as_os_str().to_string_lossy();
         let host = client.host.as_deref().unwrap_or("about:blank");
-        let fullhost = format!("{}://{}{}", if is_secure { "http" } else { "https" }, host, &path_str);
+        let fullhost = format!("{}://{}{}", if is_secure { "https" } else { "http" }, host, &path_str);
         let pfullhost = format!("[{}]{}", client.version, &fullhost);
         let domain = DOMAIN.find(host).map(|h| h.as_str()).unwrap_or(host);
         
@@ -122,15 +122,17 @@ impl HttpHandler for SamicppHandler {
             for (label, opt) in routes.iter() {
                 let label = label.as_str();
                 if 
-                    (opt.match_type == MatchType::Host       && host.eq_ignore_ascii_case(label)                                                                            ) ||
-                    (opt.match_type == MatchType::Start      && starts_with_case_insensitive(&fullhost, label)                                                              ) ||
-                    (opt.match_type == MatchType::End        && ends_with_case_insensitive(&fullhost, label)                                                                ) ||
-                    (opt.match_type == MatchType::Regex      && opt.regex.as_ref().map(|r: &Regex| r.is_match(&fullhost)).unwrap_or(false)                                  ) ||
-                    (opt.match_type == MatchType::PathStart && starts_with_case_insensitive(&path_str, label)                                                              ) ||
-                    (opt.match_type == MatchType::Scheme     && (is_secure && label.eq_ignore_ascii_case("https") || !is_secure && label.eq_ignore_ascii_case("http"))      ) ||
-                    (opt.match_type == MatchType::Protocol   && client.version.to_string().eq_ignore_ascii_case(label)                                                      ) ||
-                    (opt.match_type == MatchType::Type       && http.get_type().to_string().eq_ignore_ascii_case(label)                                                     ) ||
-                    (opt.match_type == MatchType::Domain     && domain.eq_ignore_ascii_case(label)                                                                          )
+                    match opt.match_type {
+                        MatchType::Host      => host.eq_ignore_ascii_case(label),
+                        MatchType::Start     => starts_with_case_insensitive(&fullhost, label),
+                        MatchType::End       => ends_with_case_insensitive(&fullhost, label),
+                        MatchType::Regex     => opt.regex.as_ref().map(|r: &Regex| r.is_match(&fullhost)).unwrap_or(false),
+                        MatchType::PathStart => starts_with_case_insensitive(&path_str, label),
+                        MatchType::Scheme    => is_secure && label.eq_ignore_ascii_case("https") || !is_secure && label.eq_ignore_ascii_case("http"),
+                        MatchType::Protocol  => client.version.to_string().eq_ignore_ascii_case(label),
+                        MatchType::Type      => http.get_type().to_string().eq_ignore_ascii_case(label),
+                        MatchType::Domain    => domain.eq_ignore_ascii_case(label),
+                    }
                 {
                     if check_loglevel(loglevels::ROUTE_DUMP) {
                         println!("{} {:#?}", label, opt);
@@ -182,11 +184,11 @@ impl SamicppHandler {
     async fn update_config(&self) -> Result<bool, AorB<std::io::Error, serde_json::Error>> {
         let routes = Path::new(&self.settings.content.serve_dir).join(self.args.routes.as_deref().or(self.settings.content.routes_name.as_deref()).unwrap_or("routes.json"));
         if let Ok(meta) = routes.metadata() {
-            let modified = meta.modified().map_err(|e| AorB::A(e))?;
+            let modified = meta.modified().map_err(AorB::A)?;
             if *self.routes_modified.read().unwrap() < modified {
-                let file = tokio::fs::read(&routes).await.map_err(|e| AorB::A(e))?;
+                let file = tokio::fs::read(&routes).await.map_err(AorB::A)?;
                 
-                let map: HashMap<String, RouteConfig> = serde_json::de::from_slice(&file).map_err(|e| AorB::B(e))?;
+                let map: HashMap<String, RouteConfig> = serde_json::de::from_slice(&file).map_err(AorB::B)?;
                 #[cfg(debug_assertions)] dbg!(&map);
 
                 let mut nmap = HashMap::new();
