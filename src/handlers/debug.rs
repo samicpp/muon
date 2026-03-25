@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use http::shared::{HttpSocket, LibError};
+use photon::shared::{HttpSocket, LibError};
 
 use crate::{DynHttpSocket, handlers::HttpHandler, servers::GenAddr};
 

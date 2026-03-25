@@ -9,7 +9,7 @@ mod logger;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use clap::Parser;
-use http::{extra::PolyHttpSocket, ffihttp::DynStream, httprs_core::ffi::own::RT};
+use photon::{extra::PolyHttpSocket, ffihttp::DynStream, httprs_core::ffi::own::RT};
 use tokio::io::{ReadHalf, WriteHalf};
 use owo_colors::OwoColorize;
 

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::Path, sync::{Arc, LazyLock, RwLock}, time::SystemTime};
 
 use dashmap::DashMap;
-use http::shared::{HttpSocket, LibError, LibResult};
+use photon::shared::{HttpSocket, LibError, LibResult};
 use regex::Regex;
 use serde::Deserialize;
 

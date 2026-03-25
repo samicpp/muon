@@ -1,6 +1,6 @@
 use std::{fmt::Display, net::SocketAddr, sync::Arc, time::{Duration, Instant}};
 
-use http::{extra::PolyHttpSocket, ffihttp::{DynStream, PROVIDER, servers::TlsCertSelector}, http1::server::Http1Socket, http2::{core::Http2Settings, server::Http2Socket, session::Http2Session}, shared::{HttpMethod, HttpType, HttpVersion, LibError}};
+use photon::{extra::PolyHttpSocket, ffihttp::{DynStream, PROVIDER, servers::TlsCertSelector}, http1::server::Http1Socket, http2::{core::Http2Settings, server::Http2Socket, session::Http2Session}, shared::{HttpMethod, HttpType, HttpVersion, LibError}};
 use rustls::{pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject}, sign::CertifiedKey};
 #[cfg(feature = "unix-sockets")]
 use tokio::net::UnixListener;
@@ -590,7 +590,7 @@ pub async fn handle(
             }
         }
     }
-    else if allow_prior_knowledge && peek == http::http2::PREFACE {        
+    else if allow_prior_knowledge && peek == photon::http2::PREFACE {        
         let h2 = Arc::new(Http2Session::new_buf_server(DynStream::from(stream), 8 * 1024));
         h2.read_preface().await?;
         h2.send_settings(H2SETTINGS).await?;

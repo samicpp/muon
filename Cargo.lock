@@ -361,16 +361,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "httplib"
-version = "1.0.3"
-dependencies = [
- "asyncffi",
- "http",
- "httprs_core",
- "quic",
-]
-
-[[package]]
 name = "httprs_core"
 version = "0.1.15"
 dependencies = [
@@ -449,14 +439,14 @@ dependencies = [
 
 [[package]]
 name = "muon"
-version = "1.2.7"
+version = "1.2.8"
 dependencies = [
  "async-trait",
  "clap",
  "dashmap",
- "httplib",
  "owo-colors",
  "phf",
+ "photon",
  "regex",
  "rustls",
  "serde",
@@ -548,6 +538,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e57fef6bc5981e38c2ce2d63bfa546861309f875b8a75f092d1d54ae2d64f266"
 dependencies = [
  "siphasher",
+]
+
+[[package]]
+name = "photon"
+version = "1.0.4"
+dependencies = [
+ "asyncffi",
+ "http",
+ "httprs_core",
+ "quic",
 ]
 
 [[package]]

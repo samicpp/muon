@@ -1,10 +1,10 @@
 [package]
 name = "muon"
-version = "1.2.7"
+version = "1.2.8"
 edition = "2024"
 
 [dependencies]
-httplib = { path = "./httplib", default-features = false, features = ["asyncffi"] }
+photon = { path = "./httplib", default-features = false, features = ["asyncffi"] }
 tokio = { version = "1.50.0", features = ["full"] }
 
 clap = { version = "4.6.0", features = ["derive"] }
@@ -25,9 +25,9 @@ phf = { version = "0.13.1", features = ["macros"] }
 [features]
 default = ["unix-sockets", "simple", "samicpp", "aws-lc-rs"]
 
-unix-sockets = ["httplib/unix-sockets"]
-ring = ["httplib/ring", "rustls/ring"]
-aws-lc-rs = ["httplib/aws-lc-rs", "rustls/aws-lc-rs"]
+unix-sockets = ["photon/unix-sockets"]
+ring = ["photon/ring", "rustls/ring"]
+aws-lc-rs = ["photon/aws-lc-rs", "rustls/aws-lc-rs"]
 
 simple = []
 samicpp = []

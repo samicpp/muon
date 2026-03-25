@@ -2,7 +2,7 @@
 
 use std::{sync::atomic::AtomicU64, u64};
 
-use http::shared::HttpClient;
+use photon::shared::HttpClient;
 
 
 // pub enum Color {
@@ -35,14 +35,14 @@ pub static LOGLEVEL: AtomicU64 = AtomicU64::new(u64::MAX);
 
 
 pub fn log_client_simple(client: &HttpClient) -> String {
-    use http::shared::HttpMethod::*;
-    use http::shared::HttpVersion::*;
+    use photon::shared::HttpMethod::*;
+    use photon::shared::HttpVersion::*;
 
     format!(
         "{} {} {}",
         match &client.method {
-            http::shared::HttpMethod::Unknown(Some(m)) => m,
-            http::shared::HttpMethod::Unknown(None) => "UNKOWN",
+            photon::shared::HttpMethod::Unknown(Some(m)) => m,
+            photon::shared::HttpMethod::Unknown(None) => "UNKOWN",
 
             Get => "\x1b[32mGET\x1b[0m",
             Head => "\x1b[32mHEAD\x1b[0m",
@@ -55,8 +55,8 @@ pub fn log_client_simple(client: &HttpClient) -> String {
         },
         &client.path,
         match &client.version {
-            http::shared::HttpVersion::Unknown(Some(v)) => v,
-            http::shared::HttpVersion::Unknown(None) => "UNKNOWN/0.0",
+            photon::shared::HttpVersion::Unknown(Some(v)) => v,
+            photon::shared::HttpVersion::Unknown(None) => "UNKNOWN/0.0",
             Debug => "\x1b[90mDEBUG/0.0\x1b[0m",
 
             Http09 => "\x1b[31mHTTP/0.9\x1b[0m",
