@@ -5,8 +5,11 @@ use photon::shared::{HttpSocket, LibError, LibResult};
 use regex::Regex;
 use serde::Deserialize;
 
-use crate::{AorB, DynHttpSocket, arguments::Cli, elog_with_level, handlers::{HttpHandler, sanitize_path}, log_with_level, logger::{check_loglevel, log_client_simple, loglevels}, servers::GenAddr, settings::Settings};
+use crate::{AorB, DynHttpSocket, arguments::Cli, elog_with_level, handlers::{HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::{check_loglevel, log_client_simple, loglevels}, servers::GenAddr, settings::Settings};
 use owo_colors::OwoColorize;
+
+pub mod builtin;
+pub mod deno_scripting;
 
 
 #[derive(Debug, Deserialize)]
@@ -306,6 +309,16 @@ impl SamicppHandler {
     }
     async fn file_handler(&self, http: &mut DynHttpSocket, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> { 
 
-        unimplemented!()
+        let meta = file_path.metadata()?;
+        let name = file_path.file_name().map(|s| s.to_string_lossy()).unwrap_or("".into());
+        let last = name.split(".").last().unwrap_or("");
+        let mime = *MIME_TYPES.get(last).unwrap_or(&"application/octet-stream");
+
+        if name.ends_with(".blank") {
+            http.set_status(204, "No Content".into());
+            http.close(b"").await?;
+        }
+
+        Ok(())
     }
 }
