@@ -30,7 +30,7 @@ use crate::{DynHttpSocket, servers::GenAddr};
 #[async_trait::async_trait]
 pub trait HttpHandler: Send + Sync {
     // fn new(args: Arc<Cli>, settings: Arc<Settings>) -> Self;
-    async fn entry(self: Arc<Self>, http: DynHttpSocket, addr: GenAddr, is_secure: bool) -> Result<(), LibError>;
+    async fn entry(self: Arc<Self>, http: DynHttpSocket, client_info: ClientInfo) -> Result<(), LibError>;
 }
 
 pub fn sanitize_path(path: &str) -> PathBuf {
@@ -51,4 +51,10 @@ pub fn sanitize_path(path: &str) -> PathBuf {
     }
 
     sanit
+}
+
+#[derive(Debug, Clone)]
+pub struct ClientInfo {
+    pub addr: GenAddr,
+    pub is_secure: bool,
 }

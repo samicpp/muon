@@ -40,11 +40,18 @@ or fork the repo and open a pull request. <br/>
 - [ ] advanced socket options with socket2
 - [ ] colorize log output
 - [ ] allow exporting/sending server connection data
-- [ ] embed Deno engine to execute javascript
-- [ ] enable loading FFI modules
 - [ ] create runtime stdin console
 - [ ] allow reloading settings file
+- [ ] rework logging
+- [ ] enable loading FFI modules
 
+## TODO::Features::SamicppHandler
+- [x] support serving files
+- [x] support partial content
+- [x] support redirect, var, and link files
+- [x] support download files
+- [ ] support FFI handler endpoints
+- [ ] embed Deno engine to execute javascript
 
 ## Examples
 settings.toml

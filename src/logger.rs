@@ -1,6 +1,6 @@
 // use std::fmt::Display;
 
-use std::{sync::atomic::AtomicU64, u64};
+use std::{sync::{RwLock, atomic::AtomicU64}, u64};
 
 use photon::shared::HttpClient;
 
@@ -30,6 +30,17 @@ use photon::shared::HttpClient;
 //     fn color_bg_24(&self, r: u8, g: u8, b: u8) -> String { format!("\x1b[48;2;{r};{g};{b}m{self}") }
 // }
 
+#[derive(Debug)]
+pub struct LoggingOptions { }
+impl LoggingOptions {
+    const fn default() -> Self {
+        LoggingOptions {
+
+        }
+    }
+}
+
+pub static LOGOPT: RwLock<LoggingOptions> = RwLock::new(LoggingOptions::default());
 pub static LOGLEVEL: AtomicU64 = AtomicU64::new(u64::MAX);
 
 

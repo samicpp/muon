@@ -109,8 +109,8 @@ fn main() {
 }
 
 fn load_settings(path: &str) -> Result<Settings, AorB<std::io::Error, toml::de::Error>> {
-    let raw = std::fs::read_to_string(path).map_err(|e| AorB::A(e))?;
-    let settings = toml::from_str::<Settings>(&raw).map_err(|e| AorB::B(e))?;
+    let raw = std::fs::read_to_string(path).map_err(AorB::A)?;
+    let settings = toml::from_str::<Settings>(&raw).map_err(AorB::B)?;
     Ok(settings)
 }
 

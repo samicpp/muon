@@ -1,11 +1,12 @@
-use std::{collections::HashMap, path::Path, sync::{Arc, LazyLock, RwLock}, time::SystemTime};
+use std::{collections::HashMap, ops::Range, path::{Path, PathBuf}, sync::{Arc, RwLock}, time::SystemTime};
 
 use dashmap::DashMap;
 use photon::shared::{HttpSocket, LibError, LibResult};
 use regex::Regex;
 use serde::Deserialize;
+use tokio::{fs::File, io::{AsyncReadExt, AsyncSeekExt}};
 
-use crate::{AorB, DynHttpSocket, arguments::Cli, elog_with_level, handlers::{HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::{check_loglevel, log_client_simple, loglevels}, servers::GenAddr, settings::Settings};
+use crate::{AorB, DynHttpSocket, arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::{check_loglevel, log_client_simple, loglevels}, servers::GenAddr, settings::Settings};
 use owo_colors::OwoColorize;
 
 pub mod builtin;
@@ -62,9 +63,8 @@ pub struct SamicppHandler {
     pub routes_modified: RwLock<SystemTime>,
     pub routes: RwLock<HashMap<String, Arc<RouteConfig>>>,
     pub routes_cache: DashMap<String, Arc<RouteConfig>>,
+    pub routes_path: PathBuf,
 }
-
-pub static DOMAIN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"([a-z|0-9|\-]+\.)?([a-z|0-9|\-]+)(?=:|$)").expect("domain regex invalid"));
 
 fn starts_with_case_insensitive<A: AsRef<str>, B: AsRef<str>>(haystack: A, needle: B) -> bool {
     let haystack = haystack.as_ref();
@@ -88,20 +88,25 @@ fn ends_with_case_insensitive<A: AsRef<str>, B: AsRef<str>>(haystack: A, needle:
         false
     }
 }
+fn domain_from_host(host: &str) -> &str {
+    let portless = host.split(":").next().unwrap_or(host);
+    
+    psl::domain(portless.as_bytes()).map(|d| unsafe { str::from_utf8_unchecked(d.as_bytes()) }).unwrap_or(portless)
+}
 
 #[async_trait::async_trait]
 impl HttpHandler for SamicppHandler {
-    async fn entry(self: Arc<Self>, mut http: DynHttpSocket, addr: GenAddr, is_secure: bool) -> Result<(), LibError> {
-        log_with_level!(loglevels::IP_DUMP, "{}", &addr);
+    async fn entry(self: Arc<Self>, mut http: DynHttpSocket, cinfo: ClientInfo) -> Result<(), LibError> {
+        log_with_level!(loglevels::IP_DUMP, "{}", &cinfo.addr);
         http.read_until_head_complete().await?;
         let client = http.get_client();
         log_client_simple(client);
         let path = sanitize_path(&client.path);
         let path_str = path.as_os_str().to_string_lossy();
         let host = client.host.as_deref().unwrap_or("about:blank");
-        let fullhost = format!("{}://{}{}", if is_secure { "https" } else { "http" }, host, &path_str);
+        let fullhost = format!("{}://{}{}", if cinfo.is_secure { "https" } else { "http" }, host, &path_str);
         let pfullhost = format!("[{}]{}", client.version, &fullhost);
-        let domain = DOMAIN.find(host).map(|h| h.as_str()).unwrap_or(host);
+        let domain = domain_from_host(host);
         
         match self.update_config().await {
             Err(AorB::A(err)) => elog_with_level!(loglevels::ROUTES_ERROR, "config I/O err {}", err.red()),
@@ -131,7 +136,7 @@ impl HttpHandler for SamicppHandler {
                         MatchType::End       => ends_with_case_insensitive(&fullhost, label),
                         MatchType::Regex     => opt.regex.as_ref().map(|r: &Regex| r.is_match(&fullhost)).unwrap_or(false),
                         MatchType::PathStart => starts_with_case_insensitive(&path_str, label),
-                        MatchType::Scheme    => is_secure && label.eq_ignore_ascii_case("https") || !is_secure && label.eq_ignore_ascii_case("http"),
+                        MatchType::Scheme    => cinfo.is_secure && label.eq_ignore_ascii_case("https") || !cinfo.is_secure && label.eq_ignore_ascii_case("http"),
                         MatchType::Protocol  => client.version.to_string().eq_ignore_ascii_case(label),
                         MatchType::Type      => http.get_type().to_string().eq_ignore_ascii_case(label),
                         MatchType::Domain    => domain.eq_ignore_ascii_case(label),
@@ -154,19 +159,21 @@ impl HttpHandler for SamicppHandler {
         let route = route.unwrap_or(default);
         let fin_path = Path::new(&self.settings.content.serve_dir).join(&route.directory).join(&path);
 
+
+
         if let Some(router) = route.router.as_deref() { 
             let router = Path::new(&self.settings.content.serve_dir).join(&route.directory).join(router);
             if !router.exists() {
-                self.error(&mut http, 404, &path, &router, "reason", "detail").await?;
+                self.error(&mut http, &cinfo, &route, 404, &path, &router, "router doesnt exist", "detail").await?;
             }
             else if !router.is_file() {
-                self.error(&mut http, 501, &path, &router, "router is not a file", "detail").await?;
+                self.error(&mut http, &cinfo, &route, 501, &path, &router, "router is not a file", "detail").await?;
             }
             else {
-                self.file_handler(&mut http, &route, &path, &router, &fin_path).await?;
+                self.file_handler(&mut http, &cinfo, &route, &path, &router, &fin_path).await?;
             }
         } else {
-            self.dir_or_file(&mut http, &route, &path, &fin_path, &fin_path).await?;
+            self.dir_or_file(&mut http, &cinfo, &route, &path, &fin_path, &fin_path).await?;
         };
 
 
@@ -175,21 +182,24 @@ impl HttpHandler for SamicppHandler {
 }
 impl SamicppHandler {
     pub fn new(args: Arc<Cli>, settings: Arc<Settings>) -> Self {
+        let routes_path = Path::new(&settings.content.serve_dir).join(args.routes.as_deref().or(settings.content.routes_name.as_deref()).unwrap_or("routes.json"));
+
         Self { 
             args, 
             settings, 
             routes_modified: RwLock::new(SystemTime::UNIX_EPOCH),
             routes: RwLock::new(HashMap::new()),
             routes_cache: DashMap::new(),
+            routes_path,
         }
     }
 
     async fn update_config(&self) -> Result<bool, AorB<std::io::Error, serde_json::Error>> {
-        let routes = Path::new(&self.settings.content.serve_dir).join(self.args.routes.as_deref().or(self.settings.content.routes_name.as_deref()).unwrap_or("routes.json"));
-        if let Ok(meta) = routes.metadata() {
+        // let routes = Path::new(&self.settings.content.serve_dir).join(self.args.routes.as_deref().or(self.settings.content.routes_name.as_deref()).unwrap_or("routes.json"));
+        if let Ok(meta) = self.routes_path.metadata() {
             let modified = meta.modified().map_err(AorB::A)?;
             if *self.routes_modified.read().unwrap() < modified {
-                let file = tokio::fs::read(&routes).await.map_err(AorB::A)?;
+                let file = tokio::fs::read(&self.routes_path).await.map_err(AorB::A)?;
                 
                 let map: HashMap<String, RouteConfig> = serde_json::de::from_slice(&file).map_err(AorB::B)?;
                 #[cfg(debug_assertions)] dbg!(&map);
@@ -203,7 +213,7 @@ impl SamicppHandler {
                 }
 
 
-                let mut omod = self.routes_modified.write().unwrap();
+                let mut omod: std::sync::RwLockWriteGuard<'_, SystemTime> = self.routes_modified.write().unwrap();
                 let mut omap = self.routes.write().unwrap();
                 
                 self.routes_cache.clear();
@@ -224,7 +234,7 @@ impl SamicppHandler {
         }
     }
 
-    async fn error(&self, http: &mut DynHttpSocket, code: u16, path: &Path, target_path: &Path, reason: &str, detail: &str) -> LibResult<()> { 
+    async fn error(&self, http: &mut DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, code: u16, path: &Path, target_path: &Path, reason: &str, detail: &str) -> LibResult<()> { 
         http.set_header("Content-Type", "text/plain");
 
         if check_loglevel(loglevels::HTTP_ERRORS) {
@@ -240,12 +250,32 @@ impl SamicppHandler {
             404 => {
                 log_with_level!(loglevels::HTTP_ERRORS, "404 not found {target_path:?}");
                 http.set_status(code, "Not Found".into());
-                http.close(format!("couldnt find {path:?}").as_bytes()).await?;
+                
+                if let Some(e404) = &conf.e404_file {
+                    let e404_path = Path::new(&self.settings.content.serve_dir).join(&conf.directory).join(e404);
+                    Box::pin(self.file_handler(http, cinfo, conf, path, &e404_path, target_path)).await?;
+                }
+                else { 
+                    http.close(format!("couldnt find {path:?}").as_bytes()).await?; 
+                }
+
             }
             409 => {
                 log_with_level!(loglevels::HTTP_ERRORS, "409 conflict {target_path:?} {reason}");
                 http.set_status(code, "Conflict".into());
-                http.close(format!("something went wrong. {reason}").as_bytes()).await?;
+
+                if let Some(e409) = &conf.e409_file {
+                    let e409_path = Path::new(&self.settings.content.serve_dir).join(&conf.directory).join(e409);
+                    Box::pin(self.file_handler(http, cinfo, conf, path, &e409_path, target_path)).await?;
+                }
+                else {
+                    http.close(format!("something went wrong. {reason}").as_bytes()).await?;
+                }
+            }
+            416 => {
+                log_with_level!(loglevels::HTTP_ERRORS, "416 Range Not Satisfiable {target_path:?} {reason}");
+                http.set_status(code, "Range Not Satisfiable".into());
+                http.close(format!("Range Not Satisfiable. {reason}").as_bytes()).await?;
             }
 
             500 => {
@@ -271,18 +301,18 @@ impl SamicppHandler {
     }
 
     #[inline]
-    async fn dir_or_file(&self, http: &mut DynHttpSocket, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> {
+    async fn dir_or_file(&self, http: &mut DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> {
         if file_path.is_file() {
-            self.file_handler(http, conf, path, file_path, real_path).await
+            self.file_handler(http, cinfo, conf, path, file_path, real_path).await
         }
         else if file_path.is_dir() {
-            self.dir_handler(http, conf, path, file_path, real_path).await
+            self.dir_handler(http, cinfo, conf, path, file_path, real_path).await
         }
         else {
-            self.error(http, 501, path, file_path, "reason", "detail").await
+            self.error(http, cinfo, conf, 501, path, file_path, "reason", "detail").await
         }
     }
-    async fn dir_handler(&self, http: &mut DynHttpSocket, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> { 
+    async fn dir_handler(&self, http: &mut DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> { 
         let name = file_path.file_name().map(|s| s.to_string_lossy()).unwrap_or("index".into());
 
         let mut found = None;
@@ -301,22 +331,294 @@ impl SamicppHandler {
         }
 
         if let Some(found) = found {
-            self.file_handler(http, conf, path, &found.path(), real_path).await
+            self.file_handler(http, cinfo, conf, path, &found.path(), real_path).await
         } 
         else {
-            self.error(http, 409, path, file_path, "no files found", "detail").await
+            self.error(http, cinfo, conf, 409, path, file_path, "no files found", "detail").await
         }
     }
-    async fn file_handler(&self, http: &mut DynHttpSocket, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> { 
+    async fn file_handler(&self, http: &mut DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> { 
 
         let meta = file_path.metadata()?;
         let name = file_path.file_name().map(|s| s.to_string_lossy()).unwrap_or("".into());
-        let last = name.split(".").last().unwrap_or("");
+        let dots: Vec<&str> = name.split(".").collect();
+        let last = *dots.last().unwrap_or(&"");
         let mime = *MIME_TYPES.get(last).unwrap_or(&"application/octet-stream");
+        let mut file = File::open(file_path).await?;
 
         if name.ends_with(".blank") {
             http.set_status(204, "No Content".into());
             http.close(b"").await?;
+        }
+        else if name.ends_with(".download") {
+            let name = name.strip_suffix(".download").unwrap_or(&name);
+            let mime = *MIME_TYPES.get(last.strip_suffix(".download").unwrap_or(last)).unwrap_or(&"application/octet-stream");
+            
+            http.set_header("Content-Type", mime);
+            http.set_header("Content-Disposition", &format!("attachment; filename={name}"));
+
+            if meta.len() < self.settings.content.max_file_read_size as u64 {
+                let mut out = vec![0u8; meta.len() as usize];
+                file.read_exact(&mut out).await?;
+                http.close(&out).await?;
+            }
+            else {
+                let mut chunk = vec![0u8; self.settings.content.file_chunk_size];
+                let count = meta.len() / self.settings.content.file_chunk_size as u64;
+                let remain = meta.len() % self.settings.content.file_chunk_size as u64;
+                http.set_header("Content-Length", &meta.len().to_string());
+
+                for _ in 0..count {
+                    file.read_exact(&mut chunk).await?;
+                    http.write(&chunk).await?;
+                }
+                
+                if count == 0 {
+                    http.close(b"").await?;
+                } else {
+                    let mut fin = vec![0u8; remain as usize];
+                    file.read_exact(&mut fin).await?;
+                    http.close(&fin).await?;
+                }
+            }
+        }
+        else if name.contains(".var.") || name.ends_with(".redirect") || name.ends_with(".link") {
+            http.set_header("Content-Type", mime);
+            
+            let mut content = String::new();
+            file.read_to_string(&mut content).await?;
+
+            for (h, v) in http.get_client().headers.iter() {
+                let var = format!("%H-{}%", h.to_uppercase());
+                let val = v[0].replace('%', "%PERCENT%");
+
+                content = content.replace(&var, &val);
+            }
+
+            let user_agent = http.get_client().headers.get("user-agent").map(|v| v[0].as_str()).unwrap_or("");
+            let user_agent_lower = user_agent.to_lowercase();
+            let platform =
+            if user_agent_lower.contains("windows") { "windows" }
+            else if user_agent_lower.contains("android") { "android" }
+            else if user_agent_lower.contains("macintosh") { "macos" }
+            else if user_agent_lower.contains("iphone") { "iphone" }
+            else if user_agent_lower.contains("ipad") { "ipad" }
+            else if user_agent_lower.contains("linux") { "linux" }
+            else if user_agent_lower.contains("curl") { "curl" }
+            else { "unknown" };
+            let host = http.get_client().host.as_deref().unwrap_or("about:blank");
+            let domain = domain_from_host(host);
+
+            match &cinfo.addr { 
+                GenAddr::Net(net) => content = content.replace("%IP%", &net.ip().to_string()),
+                GenAddr::Unix(unix) => {
+                    if let Some(p) = unix.as_pathname() {
+                        content = content.replace("%IP%", &p.to_string_lossy())
+                    } else {
+                        content = format!("{:?}", unix)
+                    }
+                },
+            }
+            content = content.replace("%FULL_IP%", &cinfo.addr.to_string());
+            content = content.replace("%PATH%", &path.to_string_lossy().replace('%', "%PERCENT%"));
+            content = content.replace("%HOST%", &http.get_client().host.as_deref().unwrap_or("about:blank").replace('%', "%PERCENT%"));
+            content = content.replace("%SCHEME%", if cinfo.is_secure { "https" } else { "http" });
+            content = content.replace("%BASE_DIR%", &self.settings.content.serve_dir);
+            content = content.replace("%USER_AGENT%", &user_agent.replace('%', "%PERCENT%"));
+            content = content.replace("%PLATFORM%", platform);
+            content = content.replace("%DOMAIN%", domain);
+            content = content.replace("%VERSION%", &http.get_client().version.to_string());
+            
+            content = content.replace("%PERCENT%", "%");
+
+            if name.contains(".var.") {
+                http.close(content.as_bytes()).await?;
+            } 
+            else if name.ends_with(".redirect") {
+                let location = content.replace("\n", "");
+                
+                let code =
+                if dots.len() >= 3 {
+                    let s = dots[dots.len() - 2];
+                    s.parse().unwrap_or(302)
+                }
+                else {
+                    302
+                };
+
+                http.set_status(code, "Found".to_owned());
+                http.set_header("Location", location.trim());
+                http.close(b"").await?;
+            }
+            else if name.ends_with(".link") {
+                let link = Path::new(&content);
+                Box::pin(self.dir_or_file(http, cinfo, conf, path, link, real_path)).await?;
+            }
+        }
+        else {
+            let mime = *MIME_TYPES.get(last.strip_suffix(".gz").or(last.strip_suffix(".br")).unwrap_or(last)).unwrap_or(&"application/octet-stream");
+
+            http.set_header("Content-Type", mime);
+            http.set_header("Accept-Ranges", "bytes");
+            // http.set_header("ETag", &format!("\"{}\"", meta.len(), meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())).unwrap_or(0)));
+            
+            if name.ends_with(".gz") { http.set_header("Content-Encoding", "gzip"); }
+            if name.ends_with(".br") { http.set_header("Content-Encoding", "br"); }
+
+            let ranges =
+            if let Some(rangehs) = http.get_client().headers.get("range") {
+                let mut ranges: Vec<Range<u64>> = Vec::with_capacity(1);
+                for rangeh in rangehs {
+                    let Some(rangeh) = rangeh.strip_prefix("bytes=") else { continue };
+                    for range in rangeh.split(",") {
+                        let mut r = range.split("-");
+                        let Some(start) = r.next() else { continue };
+                        let Some(end) = r.next() else { continue };
+                        
+                        if start.is_empty() && end.is_empty() {
+                            continue;
+                        }
+                        else if start.is_empty() && !end.is_empty() {
+                            let Ok(end) = end.parse::<u64>() else { continue };
+                            ranges.push(Range { 
+                                start: meta.len() - end, 
+                                end: meta.len() - 1 
+                            });
+                        }
+                        else if !start.is_empty() && end.is_empty() {
+                            let Ok(start) = start.parse() else { continue };
+                            ranges.push(Range { 
+                                start: start,
+                                end: meta.len() - 1
+                            });
+                        }
+                        else if !start.is_empty() && !end.is_empty() {
+                            let Ok(start) = start.parse() else { continue };
+                            let Ok(end) = end.parse() else { continue };
+                            ranges.push(Range { 
+                                start: start,
+                                end: end,
+                            });
+                        }
+                    }
+                }
+                Some(ranges)
+            } else {
+                None
+            };
+
+            if let Some(ranges) = &ranges && ranges.len() == 1 {
+                let range = ranges[0].clone();
+                http.set_status(206, "Partial Content".to_owned());
+
+                http.set_header("Content-Range", &format!("bytes {}-{}/{}", range.start, range.end, meta.len()));
+                
+                if range.start > range.end || range.start > meta.len() || range.end > meta.len() {
+                    self.error(http, cinfo, conf, 416, path, file_path, "invalid range", "detail").await?;
+                }
+                else {
+                    let len = range.end - range.start;
+                    file.seek(std::io::SeekFrom::Start(range.start)).await?;
+                    http.set_header("Content-Length", &len.to_string());
+
+                    if len < self.settings.content.max_file_read_size as u64 {
+                        let mut out = vec![0u8; len as usize];
+                        file.read_exact(&mut out).await?;
+                        http.close(&out).await?;
+                    }
+                    else {
+                        let mut chunk = vec![0u8; self.settings.content.file_chunk_size];
+                        let count = len / self.settings.content.file_chunk_size as u64;
+                        let remain = len % self.settings.content.file_chunk_size as u64;
+                        
+                        for _ in 0..count {
+                            file.read_exact(&mut chunk).await?;
+                            http.write(&chunk).await?;
+                        }
+                        
+                        if count == 0 {
+                            http.close(b"").await?;
+                        } else {
+                            let mut fin = vec![0u8; remain as usize];
+                            file.read_exact(&mut fin).await?;
+                            http.close(&fin).await?;
+                        }
+                    }
+                }
+
+            }
+            else if let Some(ranges) = ranges {
+                let boundary = "aGV5IGhvdyBhcmUgeW91";
+                http.set_header("Content-Type", &format!("multipart/byteranges; boundary={boundary}"));
+
+                let mut errored = false;
+                for range in ranges {
+                    if range.start > range.end || range.start > meta.len() || range.end > meta.len() {
+                        errored = true;
+                        self.error(http, cinfo, conf, 416, path, file_path, "invalid range", "detail").await?;
+                        break;
+                    }
+                    
+                    let start = range.start;
+                    let end = range.end;
+                    let len = range.end - range.start;
+
+                    file.seek(std::io::SeekFrom::Start(range.start)).await?;
+                    http.write(format!("--{boundary}\r\nContent-Type: {mime}\r\nContent-Range: bytes {start}-{end}/{}\r\n\r\n", meta.len()).as_bytes()).await?;
+
+                    if len < self.settings.content.max_file_read_size as u64 {
+                        let mut out = vec![0u8; len as usize];
+                        file.read_exact(&mut out).await?;
+                        http.write(&out).await?;
+                    }
+                    else {
+                        let mut chunk = vec![0u8; self.settings.content.file_chunk_size];
+                        let count = len / self.settings.content.file_chunk_size as u64;
+                        let remain = len % self.settings.content.file_chunk_size as u64;
+                        
+                        for _ in 0..count {
+                            file.read_exact(&mut chunk).await?;
+                            http.write(&chunk).await?;
+                        }
+                        
+                        if count != 0 {
+                            let mut fin = vec![0u8; remain as usize];
+                            file.read_exact(&mut fin).await?;
+                            http.write(&fin).await?;
+                        }
+                    }
+
+                    http.write(b"\r\n").await?;
+                }
+
+                if !errored {
+                    http.close(format!("--{boundary}--\r\n").as_bytes()).await?;
+                }
+            }
+            else if meta.len() < self.settings.content.max_file_read_size as u64 {
+                let mut out = vec![0u8; meta.len() as usize];
+                file.read_exact(&mut out).await?;
+                http.close(&out).await?;
+            }
+            else {
+                let mut chunk = vec![0u8; self.settings.content.file_chunk_size];
+                let count = meta.len() / self.settings.content.file_chunk_size as u64;
+                let remain = meta.len() % self.settings.content.file_chunk_size as u64;
+                http.set_header("Content-Length", &meta.len().to_string());
+
+                for _ in 0..count {
+                    file.read_exact(&mut chunk).await?;
+                    http.write(&chunk).await?;
+                }
+                
+                if count == 0 {
+                    http.close(b"").await?;
+                } else {
+                    let mut fin = vec![0u8; remain as usize];
+                    file.read_exact(&mut fin).await?;
+                    http.close(&fin).await?;
+                }
+            }
         }
 
         Ok(())

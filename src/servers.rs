@@ -7,7 +7,7 @@ use tokio::net::UnixListener;
 use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::{TcpListener, TcpSocket, TcpStream}};
 use tokio_rustls::TlsAcceptor;
 use owo_colors::OwoColorize;
-use crate::{arguments::Cli, elog_with_level, handlers::{HttpHandler, debug::DebugHandler}, logger::{check_loglevel, loglevels}, settings::Settings};
+use crate::{arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, debug::DebugHandler}, logger::{check_loglevel, loglevels}, settings::Settings};
 #[cfg(feature = "handler-simple")]
 use crate::handlers::simple::SimpleHandler;
 #[cfg(feature = "handler-samicpp")]
@@ -541,6 +541,7 @@ pub async fn handle(
 ) -> Result<(), LibError> {
     #[cfg(debug_assertions)] dbg!(&addr);
     
+
     let mut peek = [0; 24];
 
     match &mut stream {
@@ -548,25 +549,32 @@ pub async fn handle(
         _ => 0,
     };
 
-    let mut secure = false;
+    let is_secure;
     let assume =
     match &stream {
         DynStream::TlsDuplex(tls) => {
-            secure = true;
+            is_secure = true;
             let (_, info) = tls.get_ref();
             alpn_match(info.alpn_protocol().unwrap_or(&[]))
         },
         DynStream::TcpTls(tls) => {
-            secure = true;
+            is_secure = true;
             let (_, info) = tls.get_ref();
             alpn_match(info.alpn_protocol().unwrap_or(&[]))
         },
         DynStream::UnixTls(tls) => {
-            secure = true;
+            is_secure = true;
             let (_, info) = tls.get_ref();
             alpn_match(info.alpn_protocol().unwrap_or(&[]))
         },
-        _ => assume,
+        _ => {
+            is_secure = false;
+            assume
+        },
+    };
+    let cinfo = ClientInfo {
+        addr,
+        is_secure,
     };
 
     if let Some(assumed) = &assume {
@@ -576,13 +584,13 @@ pub async fn handle(
                 let http2 = Arc::new(Http2Session::new_buf_server(stream, 8 * 1024));
                 http2.read_preface().await?; // TODO: send protocol violation if false
                 http2.send_settings(H2SETTINGS).await?;
-                h2_loop(handler, http2, addr, secure).await?;
+                h2_loop(handler, http2, cinfo).await?;
             },
             _ => {
                 let http1 = Http1Socket::new(stream, 8 * 1024);
-                if allow_h2c { possible_h2c(handler, http1, addr, assume, secure).await?; }
+                if allow_h2c { possible_h2c(handler, http1, cinfo, assume).await?; }
                 else {
-                    match handler.entry(http1.into(), addr, secure).await {
+                    match handler.entry(http1.into(), cinfo).await {
                         Ok(()) => {},
                         Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
                     };
@@ -594,7 +602,7 @@ pub async fn handle(
         let h2 = Arc::new(Http2Session::new_buf_server(DynStream::from(stream), 8 * 1024));
         h2.read_preface().await?;
         h2.send_settings(H2SETTINGS).await?;
-        h2_loop(handler, h2, addr, secure).await?;
+        h2_loop(handler, h2, cinfo).await?;
     }
     else {
         let mut http1 = Http1Socket::new(stream, 8 * 1024);
@@ -608,13 +616,13 @@ pub async fn handle(
         {
             let http2 = Arc::new(http1.http2_prior_knowledge().await?);
             http2.send_settings(H2SETTINGS).await?;
-            h2_loop(handler, http2, addr, secure).await?;
+            h2_loop(handler, http2, cinfo).await?;
         }
 
-        else if allow_h2c { possible_h2c(handler, http1, addr, None, secure).await?; }
+        else if allow_h2c { possible_h2c(handler, http1, cinfo, None).await?; }
         else {
             http1.set_header("Connection", "close");
-            match handler.entry(http1.into(), addr, secure).await {
+            match handler.entry(http1.into(), cinfo).await {
                 Ok(()) => {},
                 Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
             }
@@ -624,7 +632,7 @@ pub async fn handle(
     Ok(())
 }
 
-pub async fn h2_loop(handler: Arc<dyn HttpHandler>, h2: Arc<Http2Session<BufReader<ReadHalf<DynStream>>, WriteHalf<DynStream>>>, addr: GenAddr, is_secure: bool) -> Result<(), LibError> {
+pub async fn h2_loop(handler: Arc<dyn HttpHandler>, h2: Arc<Http2Session<BufReader<ReadHalf<DynStream>>, WriteHalf<DynStream>>>, cinfo: ClientInfo) -> Result<(), LibError> {
     loop {
         let frame = h2.read_frame().await?;
         if check_loglevel(loglevels::HTTP2_FRAME_DUMP) {
@@ -634,10 +642,10 @@ pub async fn h2_loop(handler: Arc<dyn HttpHandler>, h2: Arc<Http2Session<BufRead
             Ok(Some(id)) => {
                 let http = PolyHttpSocket::Http2(Http2Socket::new(id, h2.clone())?);
                 let hand = handler.clone();
-                let addr = addr.clone();
+                let cinfo = cinfo.clone();
 
                 tokio::spawn(async move {
-                    match hand.entry(http, addr, is_secure).await {
+                    match hand.entry(http, cinfo).await {
                         Ok(()) => (),
                         Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
                     }
@@ -661,7 +669,7 @@ pub async fn h2_loop(handler: Arc<dyn HttpHandler>, h2: Arc<Http2Session<BufRead
 
     Ok(())
 }
-pub async fn possible_h2c(handler: Arc<dyn HttpHandler>, mut http1: Http1Socket<ReadHalf<DynStream>, WriteHalf<DynStream>>, addr: GenAddr, verover: Option<HttpVersion>, is_secure: bool) -> Result<(), LibError> {
+pub async fn possible_h2c(handler: Arc<dyn HttpHandler>, mut http1: Http1Socket<ReadHalf<DynStream>, WriteHalf<DynStream>>, cinfo: ClientInfo, verover: Option<HttpVersion>) -> Result<(), LibError> {
     let client = http1.read_until_head_complete().await?;
     
     if 
@@ -674,20 +682,20 @@ pub async fn possible_h2c(handler: Arc<dyn HttpHandler>, mut http1: Http1Socket<
 
         let http = PolyHttpSocket::Http2(Http2Socket::new(1, h2c.clone()).unwrap());
         let hand = handler.clone();
-        let adr = addr.clone();
+        let cinfo2 = cinfo.clone();
 
         tokio::spawn(async move {
-            match hand.entry(http, adr, is_secure).await {
+            match hand.entry(http, cinfo2).await {
                 Ok(()) => (),
                 Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
             }
         });
 
-        h2_loop(handler, h2c, addr, is_secure).await?;
+        h2_loop(handler, h2c, cinfo).await?;
     }
     else {
         http1.version_override = verover;
-        handler.entry(http1.into(), addr, is_secure).await?;
+        handler.entry(http1.into(), cinfo).await?;
     }
 
     Ok(())

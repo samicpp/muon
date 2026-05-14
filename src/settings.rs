@@ -45,7 +45,7 @@ pub struct SniConfig {
     pub key: String,
 }
 
-const fn def_true() -> bool { true }
+#[inline] const fn def_true() -> bool { true }
 
 #[derive(Debug, Deserialize, Default)]
 pub struct Binding {
@@ -104,6 +104,8 @@ pub struct EnvironmentSettings {
 }
 
 #[inline] fn def_serve_dir() -> String { "./".into() }
+#[inline] const fn def_max_file_read_size() -> usize { 128 * 1024 }
+#[inline] const fn def_file_chunk_size() -> usize { 128 * 1024 }
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ContentSettings {
@@ -116,6 +118,10 @@ pub struct ContentSettings {
 
     // samicpp
     pub routes_name: Option<String>,
+    #[serde(default = "def_max_file_read_size")]
+    pub max_file_read_size: usize,
+    #[serde(default = "def_file_chunk_size")]
+    pub file_chunk_size: usize,
 }
 
 #[derive(Debug, Deserialize, Default)]

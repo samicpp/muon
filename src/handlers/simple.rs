@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use photon::shared::{HttpSocket, LibError};
 
-use crate::{DynHttpSocket, arguments::Cli, handlers::{HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::{check_loglevel, log_client_simple, loglevels}, servers::GenAddr, settings::Settings};
+use crate::{DynHttpSocket, arguments::Cli, handlers::{ClientInfo, HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::{check_loglevel, log_client_simple, loglevels}, settings::Settings};
 
 
 
@@ -12,14 +12,14 @@ pub struct SimpleHandler {
 }
 #[async_trait::async_trait]
 impl HttpHandler for SimpleHandler{
-    async fn entry(self: Arc<Self>, mut http: DynHttpSocket, addr: GenAddr, _is_secure: bool) -> Result<(), LibError> {
+    async fn entry(self: Arc<Self>, mut http: DynHttpSocket, client_info: ClientInfo) -> Result<(), LibError> {
         let client = http.read_until_head_complete().await?;
         let path = Path::new(&self.settings.content.serve_dir).join(sanitize_path(&client.path));
 
         let mut status = 200;
 
         if check_loglevel(loglevels::CLIENT_DUMP) { dbg!(client); }
-        log_with_level!(loglevels::REQUEST, "\x1b[90m[{:?}]\x1b[0m {}", addr, log_client_simple(client));
+        log_with_level!(loglevels::REQUEST, "\x1b[90m[{:?}]\x1b[0m {}", client_info.addr, log_client_simple(client));
 
         http.set_header("Server", "simple-serve");
         http.set_header("Content-Type", "text/plain");
