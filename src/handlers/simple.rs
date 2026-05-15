@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use photon::shared::{HttpSocket, LibError};
 
-use crate::{DynHttpSocket, arguments::Cli, handlers::{ClientInfo, HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::{check_loglevel, log_client_simple, loglevels}, settings::Settings};
+use crate::{DynHttpSocket, arguments::Cli, handlers::{ClientInfo, HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::log_client_simple, settings::Settings};
 
 
 
@@ -18,8 +18,8 @@ impl HttpHandler for SimpleHandler{
 
         let mut status = 200;
 
-        if check_loglevel(loglevels::CLIENT_DUMP) { dbg!(client); }
-        log_with_level!(loglevels::REQUEST, "\x1b[90m[{:?}]\x1b[0m {}", client_info.addr, log_client_simple(client));
+        if self.settings.logging.client_dump.unwrap_or(false) { dbg!(client); }
+        log_with_level!(true, self.settings.logging.request, "\x1b[90m[{:?}]\x1b[0m {}", client_info.addr, log_client_simple(client));
 
         http.set_header("Server", "simple-serve");
         http.set_header("Content-Type", "text/plain");
@@ -57,7 +57,7 @@ impl HttpHandler for SimpleHandler{
         }
 
 
-        log_with_level!(loglevels::RESPONSE, "{:?} {}", path, status);
+        log_with_level!(true, self.settings.logging.response, "{:?} {}", path, status);
 
         
 

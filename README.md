@@ -36,13 +36,13 @@ or fork the repo and open a pull request. <br/>
 - [x] allow customizing tokio runtime
 - [x] support cli arguments
 - [x] support HTTP/2 and h2c
+- [x] rework logging
 - [ ] support HTTP/1.1 pipelining
 - [ ] advanced socket options with socket2
 - [ ] colorize log output
 - [ ] allow exporting/sending server connection data
 - [ ] create runtime stdin console
 - [ ] allow reloading settings file
-- [ ] rework logging
 - [ ] enable loading FFI modules
 
 ## TODO::Features::SamicppHandler
@@ -50,6 +50,7 @@ or fork the repo and open a pull request. <br/>
 - [x] support partial content
 - [x] support redirect, var, and link files
 - [x] support download files
+- [x] support route level auth
 - [ ] support FFI handler endpoints
 - [ ] embed Deno engine to execute javascript
 

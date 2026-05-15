@@ -1,4 +1,24 @@
+use std::str::FromStr;
+
 use clap::Parser;
+
+
+#[derive(Debug, Clone)]
+pub enum Level {
+    Name(String),
+    Number(i16),
+}
+impl FromStr for Level {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(num) = s.parse() {
+            Ok(Self::Number(num))
+        }
+        else {
+            Ok(Self::Name(s.to_owned()))
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
@@ -22,7 +42,7 @@ pub struct Cli {
     pub handler: Option<String>,
 
     #[arg(long, short, help = "sets the loglevel, overrides settings")]
-    pub loglevel: Option<u64>,
+    pub loglevel: Option<Level>,
 
     #[arg(long, help = "sets the filename of the routes, overrides settings")]
     pub routes: Option<String>,

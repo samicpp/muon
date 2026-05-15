@@ -7,7 +7,7 @@ use tokio::net::UnixListener;
 use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::{TcpListener, TcpSocket, TcpStream}};
 use tokio_rustls::TlsAcceptor;
 use owo_colors::OwoColorize;
-use crate::{arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, debug::DebugHandler}, logger::{check_loglevel, loglevels}, settings::Settings};
+use crate::{arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, debug::DebugHandler}, settings::Settings};
 #[cfg(feature = "handler-simple")]
 use crate::handlers::simple::SimpleHandler;
 #[cfg(feature = "handler-samicpp")]
@@ -37,7 +37,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
         #[cfg(feature = "handler-samicpp")] "samicpp" => Arc::new(SamicppHandler::new(args.clone(), settings.clone())),
 
         _ => {
-            elog_with_level!(loglevels::INIT_ERROR, "no handler named {} available", handler);
+            elog_with_level!(true, settings.logging.init_error, "no handler named {} available", handler);
             return
         }
     };
@@ -91,75 +91,75 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
 
         let Some(prot) = pl.next() else { continue; };
         let Some(loc) = pl.next() else {
-            elog_with_level!(loglevels::INIT_ERROR, "invalid address: \"{addr}\"");
+            elog_with_level!(true, settings.logging.init_error, "invalid address: \"{addr}\"");
             continue;
         };
 
         match prot {
             "tcp" | "http" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(listener, handler.clone(), true, true, None))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
+                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), true, true, None))),
                 }
             },
             "http1" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(listener, handler.clone(), false, false, None))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
+                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, None))),
                 }
             },
             "http1.1" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(listener, handler.clone(), false, false, Some(HttpVersion::Http11)))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
+                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http11)))),
                 }
             },
             "http1.0" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(listener, handler.clone(), false, false, Some(HttpVersion::Http10)))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
+                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http10)))),
                 }
             },
             "http0.9" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(listener, handler.clone(), false, false, Some(HttpVersion::Http09)))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
+                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http09)))),
                 }
             },
 
             "http2" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(listener, handler.clone(), false, false, Some(HttpVersion::Http2)))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
+                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http2)))),
                 }
             },
 
             "https" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_tls(listener, tls_acceptor.clone(), handler.clone(), true, false, None))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
+                    Ok(listener) => jhs.push(tokio::spawn(start_tls(settings.clone(), listener, tls_acceptor.clone(), handler.clone(), true, false, None))),
                 }
             },
             "httpx" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_dyn_tls(listener, tls_acceptor.clone(), handler.clone(), true, true, None))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
+                    Ok(listener) => jhs.push(tokio::spawn(start_dyn_tls(settings.clone(), listener, tls_acceptor.clone(), handler.clone(), true, true, None))),
                 }
             },
 
             #[cfg(feature = "unix-sockets")]
             "unix" => {
                 match UnixListener::bind(loc) {
-                    Err(err) => elog_with_level!(loglevels::INIT_ERROR, "couldnt listen to {loc} {}", err.red()),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
                     Ok(listener) => {
                         // servers.push(Server::TcpH2(server.clone()));
                         let handler = handler.clone();
-                        jhs.push(tokio::spawn(serve(listener, handler, true, true, None)));
+                        jhs.push(tokio::spawn(serve(settings.clone(), listener, handler, true, true, None)));
                     }
                 }
             }
 
-            _ => elog_with_level!(loglevels::INIT_ERROR, "invalid protocol \"{prot}\""),
+            _ => elog_with_level!(true, settings.logging.init_error, "invalid protocol \"{prot}\""),
         }
     }
 
@@ -168,7 +168,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
 
         let Some(prot) = pl.next() else { continue; };
         let Some(loc) = pl.next() else {
-            elog_with_level!(loglevels::INIT_ERROR, "invalid address: \"{}\"", binding.address);
+            elog_with_level!(true, settings.logging.init_error, "invalid address: \"{}\"", binding.address);
             continue;
         };
 
@@ -177,7 +177,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
         let socket = match socket {
             Ok(socket) => socket,
             Err(err) => {
-                elog_with_level!(loglevels::INIT_ERROR, "couldnt create socket {}", err.red());
+                elog_with_level!(true, settings.logging.init_error, "couldnt create socket {}", err.red());
                 continue;
             }
         };
@@ -189,13 +189,13 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
         if let Some(opt) = binding.send_bufsize { let _ = socket.set_send_buffer_size(opt); }
 
         if let Err(err) = socket.bind(address) {
-            elog_with_level!(loglevels::INIT_ERROR, "couldnt bind {}", err.red());
+            elog_with_level!(true, settings.logging.init_error, "couldnt bind {}", err.red());
             continue;
         }
         let listener = match socket.listen(binding.backlog.unwrap_or(backlog)) {
             Ok(socket) => socket,
             Err(err) => {
-                elog_with_level!(loglevels::INIT_ERROR, "couldnt listen {}", err.red());
+                elog_with_level!(true, settings.logging.init_error, "couldnt listen {}", err.red());
                 continue;
             }
         };
@@ -258,7 +258,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
             },
 
             _ => {
-                elog_with_level!(loglevels::INIT_ERROR, "invalid protocol \"{prot}\"");
+                elog_with_level!(true, settings.logging.init_error, "invalid protocol \"{prot}\"");
                 continue;
             }
         }
@@ -266,14 +266,15 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
         let acceptor = tls_acceptor.clone();
         let handler = handler.clone();
         let assume = assume.clone();
+        let settings = settings.clone();
         match dyn_tls {
             Some(true) => {
-                jhs.push(tokio::spawn(start_dyn_tls(listener, acceptor, handler, allow_h2c, allow_prior_knowledge, assume)));
+                jhs.push(tokio::spawn(start_dyn_tls(settings, listener, acceptor, handler, allow_h2c, allow_prior_knowledge, assume)));
             },
             Some(false) => {
-                jhs.push(tokio::spawn(start_tls(listener, acceptor, handler, allow_h2c, allow_prior_knowledge, assume)));
+                jhs.push(tokio::spawn(start_tls(settings, listener, acceptor, handler, allow_h2c, allow_prior_knowledge, assume)));
             },
-            None => jhs.push(tokio::spawn(start_tcp(listener, handler, allow_h2c, allow_prior_knowledge, assume))),
+            None => jhs.push(tokio::spawn(start_tcp(settings, listener, handler, allow_h2c, allow_prior_knowledge, assume))),
         }
     }
 
@@ -387,6 +388,7 @@ pub fn create_socket<A: std::net::ToSocketAddrs>(addr: A, backlog: u32) -> std::
     socket.listen(backlog)
 }
 pub async fn start_tcp(
+    settings: Arc<Settings>,
     // jhs: &mut Vec<JoinHandle<()>>, 
     listener: TcpListener, 
     handler: Arc<dyn HttpHandler>, 
@@ -398,15 +400,17 @@ pub async fn start_tcp(
     loop {
         let Ok((stream, addr)) = listener.accept().await else { continue; };
         let handler = handler.clone();
+        let settings = settings.clone();
+        let settings2 = settings.clone();
 
         let assume = assume.clone();
         tokio::spawn(async move {
             let now = Instant::now();
-            match handle(handler, stream.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
+            match handle(settings2, handler, stream.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
                 Ok(()) => (),
-                Err(err) => elog_with_level!(loglevels::HANDLER_ERROR, "{err}"),
+                Err(err) => elog_with_level!(true, settings.logging.handler_error, "{err}"),
             }
-            if check_loglevel(loglevels::RESPONSE_TIME) {
+            if settings.logging.response_time.unwrap_or(false) {
                 let stamp = timestamp(now.elapsed());
                 println!("connection took {}", &stamp);
             }
@@ -414,6 +418,7 @@ pub async fn start_tcp(
     }
 }
 pub async fn start_tls(
+    settings: Arc<Settings>,
     // jhs: &mut Vec<JoinHandle<()>>, 
     listener: TcpListener, 
     acceptor: Arc<TlsAcceptor>, 
@@ -426,21 +431,23 @@ pub async fn start_tls(
     loop {
         let Ok((stream, addr)) = listener.accept().await else { continue; };
         let handler = handler.clone();
+        let settings = settings.clone();
+        let settings2 = settings.clone();
 
         let assume = assume.clone();
         let acceptor = acceptor.clone();
         tokio::spawn(async move {
             let now = Instant::now();
             match acceptor.accept(stream).await {
-                Ok(tls) => match handle(handler, tls.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
+                Ok(tls) => match handle(settings2, handler, tls.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
                     Ok(()) => (),
-                    Err(err) => elog_with_level!(loglevels::HANDLER_ERROR, "{err}"),
+                    Err(err) => elog_with_level!(true, settings.logging.handler_error, "{err}"),
                 },
                 Err(err) => {
-                    elog_with_level!(loglevels::TLS_UPGRADE_ERROR, "{err}")
+                    elog_with_level!(true, settings.logging.tls_upgrade_error, "{err}")
                 }
             }
-            if check_loglevel(loglevels::RESPONSE_TIME) {
+            if settings.logging.response_time.unwrap_or(false) {
                 let stamp = timestamp(now.elapsed());
                 println!("connection took {}", &stamp);
             }
@@ -448,6 +455,7 @@ pub async fn start_tls(
     }
 }
 pub async fn start_dyn_tls(
+    settings: Arc<Settings>,
     // jhs: &mut Vec<JoinHandle<()>>, 
     listener: TcpListener, 
     acceptor: Arc<TlsAcceptor>, 
@@ -460,21 +468,23 @@ pub async fn start_dyn_tls(
     loop {
         let Ok((tcp, addr)) = listener.accept().await else { continue; };
         let handler = handler.clone();
+        let settings = settings.clone();
+        let settings2 = settings.clone();
 
         let assume = assume.clone();
         let acceptor = acceptor.clone();
         tokio::spawn(async move {
             let now = Instant::now();
             match dyn_upgrade(tcp, acceptor).await {
-                Ok(stream) => match handle(handler, stream, addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
+                Ok(stream) => match handle(settings2, handler, stream, addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
                     Ok(()) => (),
-                    Err(err) => elog_with_level!(loglevels::HANDLER_ERROR, "{err}"),
+                    Err(err) => elog_with_level!(true, settings.logging.handler_error, "{err}"),
                 },
                 Err(err) => {
-                    elog_with_level!(loglevels::TLS_UPGRADE_ERROR, "{err}")
+                    elog_with_level!(true, settings.logging.tls_upgrade_error, "{err}")
                 },
             }
-            if check_loglevel(loglevels::RESPONSE_TIME) {
+            if settings.logging.response_time.unwrap_or(false) {
                 let stamp = timestamp(now.elapsed());
                 println!("connection took {}", &stamp);
             }
@@ -494,19 +504,22 @@ pub async fn dyn_upgrade(tcp: TcpStream, acceptor: Arc<TlsAcceptor>) -> Result<D
     }
 
 }
-pub async fn serve<L: Listener>(listener: L, handler: Arc<dyn HttpHandler>, allow_h2c: bool, allow_prior_knowledge: bool, /*peek: bool,*/ assume: Option<HttpVersion>) {
+pub async fn serve<L: Listener>(settings: Arc<Settings>, listener: L, handler: Arc<dyn HttpHandler>, allow_h2c: bool, allow_prior_knowledge: bool, /*peek: bool,*/ assume: Option<HttpVersion>) {
     loop {
         let Ok((stream, addr)) = listener.accept().await else { continue; };
         let handler = handler.clone();
+        let settings = settings.clone();
+        let settings2 = settings.clone();
+
 
         let assume = assume.clone();
         tokio::spawn(async move {
             let now = Instant::now();
-            match handle(handler, stream.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
+            match handle(settings2, handler, stream.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
                 Ok(()) => (),
-                Err(err) => elog_with_level!(loglevels::HANDLER_ERROR, "{err}"),
+                Err(err) => elog_with_level!(true, settings.logging.handler_error, "{err}"),
             }
-            if check_loglevel(loglevels::RESPONSE_TIME) {
+            if settings.logging.response_time.unwrap_or(false) {
                 let stamp = timestamp(now.elapsed());
                 println!("connection took {}", &stamp);
             }
@@ -528,6 +541,7 @@ fn alpn_match(alpn: &[u8]) -> Option<HttpVersion> {
 }
 
 pub async fn handle(
+    settings: Arc<Settings>,
     handler: Arc<dyn HttpHandler>, 
     
     mut stream: DynStream, 
@@ -584,15 +598,16 @@ pub async fn handle(
                 let http2 = Arc::new(Http2Session::new_buf_server(stream, 8 * 1024));
                 http2.read_preface().await?; // TODO: send protocol violation if false
                 http2.send_settings(H2SETTINGS).await?;
-                h2_loop(handler, http2, cinfo).await?;
+                h2_loop(settings, handler, http2, cinfo).await?;
             },
             _ => {
                 let http1 = Http1Socket::new(stream, 8 * 1024);
-                if allow_h2c { possible_h2c(handler, http1, cinfo, assume).await?; }
+                let settings2 = settings.clone();
+                if allow_h2c { possible_h2c(settings2, handler, http1, cinfo, assume).await?; }
                 else {
                     match handler.entry(http1.into(), cinfo).await {
                         Ok(()) => {},
-                        Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
+                        Err(err) => elog_with_level!(true, settings.logging.content_handler_error, "{err}"),
                     };
                 }
             }
@@ -602,7 +617,7 @@ pub async fn handle(
         let h2 = Arc::new(Http2Session::new_buf_server(DynStream::from(stream), 8 * 1024));
         h2.read_preface().await?;
         h2.send_settings(H2SETTINGS).await?;
-        h2_loop(handler, h2, cinfo).await?;
+        h2_loop(settings, handler, h2, cinfo).await?;
     }
     else {
         let mut http1 = Http1Socket::new(stream, 8 * 1024);
@@ -616,15 +631,15 @@ pub async fn handle(
         {
             let http2 = Arc::new(http1.http2_prior_knowledge().await?);
             http2.send_settings(H2SETTINGS).await?;
-            h2_loop(handler, http2, cinfo).await?;
+            h2_loop(settings, handler, http2, cinfo).await?;
         }
 
-        else if allow_h2c { possible_h2c(handler, http1, cinfo, None).await?; }
+        else if allow_h2c { possible_h2c(settings, handler, http1, cinfo, None).await?; }
         else {
             http1.set_header("Connection", "close");
             match handler.entry(http1.into(), cinfo).await {
                 Ok(()) => {},
-                Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
+                Err(err) => elog_with_level!(true, settings.logging.content_handler_error, "{err}"),
             }
         }
     }
@@ -632,10 +647,10 @@ pub async fn handle(
     Ok(())
 }
 
-pub async fn h2_loop(handler: Arc<dyn HttpHandler>, h2: Arc<Http2Session<BufReader<ReadHalf<DynStream>>, WriteHalf<DynStream>>>, cinfo: ClientInfo) -> Result<(), LibError> {
+pub async fn h2_loop(settings: Arc<Settings>, handler: Arc<dyn HttpHandler>, h2: Arc<Http2Session<BufReader<ReadHalf<DynStream>>, WriteHalf<DynStream>>>, cinfo: ClientInfo) -> Result<(), LibError> {
     loop {
         let frame = h2.read_frame().await?;
-        if check_loglevel(loglevels::HTTP2_FRAME_DUMP) {
+        if settings.logging.http2_frame_dump.unwrap_or(false) {
             println!("\x1b[36m{:?}\x1b[0m ({}) {:?}", frame.ftype, frame.source.len(), &frame.source[..29.min(frame.source.len())]);
         }
         match h2.handle(frame).await {
@@ -644,21 +659,22 @@ pub async fn h2_loop(handler: Arc<dyn HttpHandler>, h2: Arc<Http2Session<BufRead
                 let hand = handler.clone();
                 let cinfo = cinfo.clone();
 
+                let settings = settings.clone();
                 tokio::spawn(async move {
                     match hand.entry(http, cinfo).await {
                         Ok(()) => (),
-                        Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
+                        Err(err) => elog_with_level!(true, settings.logging.content_handler_error, "{err}"),
                     }
                 });
             },
             Ok(None) => (),
             Err(err @ (LibError::InvalidFrame | LibError::InvalidStream | LibError::ProtocolError | LibError::Huffman(_))) => {
-                elog_with_level!(loglevels::HTTP2_ERROR, "{err}");
+                elog_with_level!(false, settings.logging.http2_error, "{err}");
                 h2.send_goaway(0, 1, b"protocol error").await?;
                 break;
             },
             Err(err) => {
-                elog_with_level!(loglevels::HTTP2_ERROR, "{err}");
+                elog_with_level!(false, settings.logging.http2_error, "{err}");
                 break;
             },
         }
@@ -669,7 +685,7 @@ pub async fn h2_loop(handler: Arc<dyn HttpHandler>, h2: Arc<Http2Session<BufRead
 
     Ok(())
 }
-pub async fn possible_h2c(handler: Arc<dyn HttpHandler>, mut http1: Http1Socket<ReadHalf<DynStream>, WriteHalf<DynStream>>, cinfo: ClientInfo, verover: Option<HttpVersion>) -> Result<(), LibError> {
+pub async fn possible_h2c(settings: Arc<Settings>, handler: Arc<dyn HttpHandler>, mut http1: Http1Socket<ReadHalf<DynStream>, WriteHalf<DynStream>>, cinfo: ClientInfo, verover: Option<HttpVersion>) -> Result<(), LibError> {
     let client = http1.read_until_head_complete().await?;
     
     if 
@@ -684,14 +700,15 @@ pub async fn possible_h2c(handler: Arc<dyn HttpHandler>, mut http1: Http1Socket<
         let hand = handler.clone();
         let cinfo2 = cinfo.clone();
 
+        let settings2 = settings.clone();
         tokio::spawn(async move {
             match hand.entry(http, cinfo2).await {
                 Ok(()) => (),
-                Err(err) => elog_with_level!(loglevels::CONTENT_HANDLER_ERROR, "{err}"),
+                Err(err) => elog_with_level!(true, settings2.logging.content_handler_error, "{err}"),
             }
         });
 
-        h2_loop(handler, h2c, cinfo).await?;
+        h2_loop(settings, handler, h2c, cinfo).await?;
     }
     else {
         http1.version_override = verover;

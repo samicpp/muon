@@ -1,6 +1,6 @@
 // use std::fmt::Display;
 
-use std::{sync::{RwLock, atomic::AtomicU64}, u64};
+// use std::{sync::{RwLock, atomic::AtomicU64}, u64};
 
 use photon::shared::HttpClient;
 
@@ -29,20 +29,6 @@ use photon::shared::HttpClient;
 //     fn color_bg_8(&self, color: u8) -> String { format!("\x1b[48;5;{color}m{self}") }
 //     fn color_bg_24(&self, r: u8, g: u8, b: u8) -> String { format!("\x1b[48;2;{r};{g};{b}m{self}") }
 // }
-
-#[derive(Debug)]
-pub struct LoggingOptions { }
-impl LoggingOptions {
-    const fn default() -> Self {
-        LoggingOptions {
-
-        }
-    }
-}
-
-pub static LOGOPT: RwLock<LoggingOptions> = RwLock::new(LoggingOptions::default());
-pub static LOGLEVEL: AtomicU64 = AtomicU64::new(u64::MAX);
-
 
 
 pub fn log_client_simple(client: &HttpClient) -> String {
@@ -79,28 +65,19 @@ pub fn log_client_simple(client: &HttpClient) -> String {
     )
 }
 
-pub fn check_loglevel<N: Into<u64>>(level: N) -> bool {
-    (LOGLEVEL.load(std::sync::atomic::Ordering::Relaxed) & level.into()) != 0
-}
-pub fn get_loglevel() -> u64 {
-    LOGLEVEL.load(std::sync::atomic::Ordering::Relaxed)
-}
-pub fn set_loglevel<N: Into<u64>>(level: N) {
-    LOGLEVEL.store(level.into(), std::sync::atomic::Ordering::Relaxed);
-}
 
 #[macro_export]
 macro_rules! log_with_level {
-    ($level:expr, $($arg:tt)*) => {{
-        if crate::logger::check_loglevel($level) {
+    ($default:expr, $opt:expr, $($arg:tt)*) => {{
+        if $opt.unwrap_or($default) {
             println!($($arg)*);
         }
     }};
 }
 #[macro_export]
 macro_rules! elog_with_level {
-    ($level:expr, $($arg:tt)*) => {{
-        if crate::logger::check_loglevel($level) {
+    ($default:expr, $opt:expr, $($arg:tt)*) => {{
+        if $opt.unwrap_or($default) {
             eprintln!($($arg)*);
         }
     }};
@@ -132,31 +109,31 @@ macro_rules! elog_with_level {
 //     text
 // }
 
-pub mod loglevels {
-    pub const INIT_ERROR: u64 = 1 << 0;
-    // pub const SERVER_ERROR: u64 = 1 << 1;
+// pub mod loglevels {
+//     pub const INIT_ERROR: u64 = 1 << 0;
+//     // pub const SERVER_ERROR: u64 = 1 << 1;
 
-    pub const EXIT: u64 = 1 << 2;
-    pub const CLIENT_DUMP: u64 = 1 << 3;
-    pub const REQUEST: u64 = 1 << 4;
+//     pub const EXIT: u64 = 1 << 2;
+//     pub const CLIENT_DUMP: u64 = 1 << 3;
+//     pub const REQUEST: u64 = 1 << 4;
     
-    pub const RESPONSE: u64 = 1 << 5;
-    pub const RESPONSE_TIME: u64 = 1 << 6;
+//     pub const RESPONSE: u64 = 1 << 5;
+//     pub const RESPONSE_TIME: u64 = 1 << 6;
 
-    pub const HANDLER_ERROR: u64 = 1 << 7;
-    pub const TLS_UPGRADE_ERROR: u64 = 1 << 8;
-    pub const CONTENT_HANDLER_ERROR: u64 = 1 << 9;
-    pub const HTTP2_ERROR: u64 = 1 << 10;
-    pub const HTTP2_FRAME_DUMP: u64 = 1 << 11;
-    pub const IP_DUMP: u64 = 1 << 12;
+//     pub const HANDLER_ERROR: u64 = 1 << 7;
+//     pub const TLS_UPGRADE_ERROR: u64 = 1 << 8;
+//     pub const CONTENT_HANDLER_ERROR: u64 = 1 << 9;
+//     pub const HTTP2_ERROR: u64 = 1 << 10;
+//     pub const HTTP2_FRAME_DUMP: u64 = 1 << 11;
+//     pub const IP_DUMP: u64 = 1 << 12;
 
-    // samicpp handler
-    pub const ROUTES_ERROR: u64 = 1 << 13;
-    pub const ROUTES_UPDATE: u64 = 1 << 14;
-    pub const ROUTE_DUMP: u64 = 1 << 15;
+//     // samicpp handler
+//     pub const ROUTES_ERROR: u64 = 1 << 13;
+//     pub const ROUTES_UPDATE: u64 = 1 << 14;
+//     pub const ROUTE_DUMP: u64 = 1 << 15;
 
-    pub const HTTP_ERRORS: u64 = 1 << 16;
-}
+//     pub const HTTP_ERRORS: u64 = 1 << 16;
+// }
 
     // Debug = 1,
     // Verbose = 2,

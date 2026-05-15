@@ -5,8 +5,9 @@ use photon::shared::{HttpSocket, LibError, LibResult};
 use regex::Regex;
 use serde::Deserialize;
 use tokio::{fs::File, io::{AsyncReadExt, AsyncSeekExt}};
+use base64::{Engine, engine::general_purpose::STANDARD as b64std};
 
-use crate::{AorB, DynHttpSocket, arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::{check_loglevel, log_client_simple, loglevels}, servers::GenAddr, settings::Settings};
+use crate::{AorB, DynHttpSocket, arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::log_client_simple, servers::GenAddr, settings::Settings};
 use owo_colors::OwoColorize;
 
 pub mod builtin;
@@ -46,6 +47,8 @@ impl Default for RouteConfig {
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "kebab-case")]
 pub enum MatchType {
+    Always,
+    Default,
     Host,
     Start,
     End,
@@ -93,25 +96,40 @@ fn domain_from_host(host: &str) -> &str {
     
     psl::domain(portless.as_bytes()).map(|d| unsafe { str::from_utf8_unchecked(d.as_bytes()) }).unwrap_or(portless)
 }
+async fn authenticate(http: &mut DynHttpSocket, realm: &str, usrpass: &[u8]) -> LibResult<bool> {
+    if let Some(authh) = http.get_client().headers.get("authorization")
+    {
+        let auth = authh[0].split(' ').last().unwrap_or(&authh[0]);
+        if let Ok(auth) = b64std.decode(auth) && usrpass == auth {
+            return Ok(true)
+        }
+    }
+    http.set_status(401, "Unauthorized".to_owned());
+    http.set_header("WWW-Authenticate", &format!("Basic realm=\"{realm}\", charset=\"UTF-8\""));
+    http.set_header("Content-Length", "0");
+    http.close(b"").await?;
+    Ok(false)
+}
 
 #[async_trait::async_trait]
 impl HttpHandler for SamicppHandler {
     async fn entry(self: Arc<Self>, mut http: DynHttpSocket, cinfo: ClientInfo) -> Result<(), LibError> {
-        log_with_level!(loglevels::IP_DUMP, "{}", &cinfo.addr);
+        log_with_level!(false, self.settings.logging.ip_dump, "{}", &cinfo.addr);
         http.read_until_head_complete().await?;
         let client = http.get_client();
-        log_client_simple(client);
         let path = sanitize_path(&client.path);
         let path_str = path.as_os_str().to_string_lossy();
         let host = client.host.as_deref().unwrap_or("about:blank");
         let fullhost = format!("{}://{}{}", if cinfo.is_secure { "https" } else { "http" }, host, &path_str);
         let pfullhost = format!("[{}]{}", client.version, &fullhost);
         let domain = domain_from_host(host);
+
+        log_with_level!(true, self.settings.logging.request, "\x1b[90m[{:?}]\x1b[0m {}", cinfo.addr, log_client_simple(client));
         
         match self.update_config().await {
-            Err(AorB::A(err)) => elog_with_level!(loglevels::ROUTES_ERROR, "config I/O err {}", err.red()),
-            Err(AorB::B(err)) => elog_with_level!(loglevels::ROUTES_ERROR, "config json err {}", err.red()),
-            Ok(true) => log_with_level!(loglevels::ROUTES_UPDATE, "routes updated"),
+            Err(AorB::A(err)) => elog_with_level!(true, self.settings.logging.routes_error, "routes I/O err {}", err.red()),
+            Err(AorB::B(err)) => elog_with_level!(true, self.settings.logging.routes_error, "routes json err {}", err.red()),
+            Ok(true) => log_with_level!(false, self.settings.logging.routes_update, "routes updated"),
             Ok(false) => {},
         }
 
@@ -119,7 +137,7 @@ impl HttpHandler for SamicppHandler {
         let default = 
         if let Some(def) = self.routes_cache.get("default") { def.clone() }
         else {
-            elog_with_level!(loglevels::ROUTES_ERROR, "no default entry");
+            elog_with_level!(true, self.settings.logging.routes_error, "no default entry in routes");
             Arc::new(RouteConfig::default())
         };
         if let Some(conf) = self.routes_cache.get(&pfullhost) {
@@ -131,6 +149,8 @@ impl HttpHandler for SamicppHandler {
                 let label = label.as_str();
                 if 
                     match opt.match_type {
+                        MatchType::Always    => true,
+                        MatchType::Default   => false,
                         MatchType::Host      => host.eq_ignore_ascii_case(label),
                         MatchType::Start     => starts_with_case_insensitive(&fullhost, label),
                         MatchType::End       => ends_with_case_insensitive(&fullhost, label),
@@ -140,9 +160,10 @@ impl HttpHandler for SamicppHandler {
                         MatchType::Protocol  => client.version.to_string().eq_ignore_ascii_case(label),
                         MatchType::Type      => http.get_type().to_string().eq_ignore_ascii_case(label),
                         MatchType::Domain    => domain.eq_ignore_ascii_case(label),
+                        // _                    => false,
                     }
                 {
-                    if check_loglevel(loglevels::ROUTE_DUMP) {
+                    if self.settings.logging.route_dump.unwrap_or(false) {
                         println!("{} {:#?}", label, opt);
                     }
                     route = Some(opt.clone());
@@ -160,22 +181,26 @@ impl HttpHandler for SamicppHandler {
         let fin_path = Path::new(&self.settings.content.serve_dir).join(&route.directory).join(&path);
 
 
+        if let Some(usrpass) = &route.auth && !authenticate(&mut http, &fullhost, usrpass.as_bytes()).await? {
 
-        if let Some(router) = route.router.as_deref() { 
-            let router = Path::new(&self.settings.content.serve_dir).join(&route.directory).join(router);
-            if !router.exists() {
-                self.error(&mut http, &cinfo, &route, 404, &path, &router, "router doesnt exist", "detail").await?;
-            }
-            else if !router.is_file() {
-                self.error(&mut http, &cinfo, &route, 501, &path, &router, "router is not a file", "detail").await?;
-            }
-            else {
-                self.file_handler(&mut http, &cinfo, &route, &path, &router, &fin_path).await?;
-            }
-        } else {
-            self.dir_or_file(&mut http, &cinfo, &route, &path, &fin_path, &fin_path).await?;
-        };
+        }
 
+        else {
+            if let Some(router) = route.router.as_deref() { 
+                let router = Path::new(&self.settings.content.serve_dir).join(&route.directory).join(router);
+                if !router.exists() {
+                    self.error(&mut http, &cinfo, &route, 404, &path, &router, "router doesnt exist", "detail").await?;
+                }
+                else if !router.is_file() {
+                    self.error(&mut http, &cinfo, &route, 501, &path, &router, "router is not a file", "detail").await?;
+                }
+                else {
+                    self.file_handler(&mut http, &cinfo, &route, &path, &router, &fin_path).await?;
+                }
+            } else {
+                self.dir_or_file(&mut http, &cinfo, &route, &path, &fin_path, &fin_path).await?;
+            };
+        }
 
         Ok(())
     }
@@ -237,18 +262,18 @@ impl SamicppHandler {
     async fn error(&self, http: &mut DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, code: u16, path: &Path, target_path: &Path, reason: &str, detail: &str) -> LibResult<()> { 
         http.set_header("Content-Type", "text/plain");
 
-        if check_loglevel(loglevels::HTTP_ERRORS) {
-            println!("{code} {reason}");
+        if self.settings.logging.http_error.unwrap_or(true) {
+            println!("{path:?} {target_path:?} {code} {reason} {detail}");
         }
 
         match code {
             400 => {
-                log_with_level!(loglevels::HTTP_ERRORS, "400 bad request");
+                log_with_level!(true, self.settings.logging.http_error, "400 bad request");
                 http.set_status(code, "Bad Request".into());
                 http.close(b"broken request").await?;
             }
             404 => {
-                log_with_level!(loglevels::HTTP_ERRORS, "404 not found {target_path:?}");
+                log_with_level!(true, self.settings.logging.http_error, "404 not found {target_path:?}");
                 http.set_status(code, "Not Found".into());
                 
                 if let Some(e404) = &conf.e404_file {
@@ -261,7 +286,7 @@ impl SamicppHandler {
 
             }
             409 => {
-                log_with_level!(loglevels::HTTP_ERRORS, "409 conflict {target_path:?} {reason}");
+                log_with_level!(true, self.settings.logging.http_error, "409 conflict {target_path:?} {reason}");
                 http.set_status(code, "Conflict".into());
 
                 if let Some(e409) = &conf.e409_file {
@@ -273,25 +298,25 @@ impl SamicppHandler {
                 }
             }
             416 => {
-                log_with_level!(loglevels::HTTP_ERRORS, "416 Range Not Satisfiable {target_path:?} {reason}");
+                log_with_level!(true, self.settings.logging.http_error, "416 Range Not Satisfiable {target_path:?} {reason}");
                 http.set_status(code, "Range Not Satisfiable".into());
                 http.close(format!("Range Not Satisfiable. {reason}").as_bytes()).await?;
             }
 
             500 => {
-                log_with_level!(loglevels::HTTP_ERRORS, "500 internal server error");
-                log_with_level!(loglevels::HTTP_ERRORS, "{}: {}", reason.red(), detail.red());
+                log_with_level!(true, self.settings.logging.http_error, "500 internal server error");
+                log_with_level!(true, self.settings.logging.http_error, "{}: {}", reason.red(), detail.red());
                 http.set_status(code, "Internal Server Error".into());
                 http.close(format!("something went wrong\r\n{reason}").as_bytes()).await?;
             }
             501 => {
-                log_with_level!(loglevels::HTTP_ERRORS, "501 unimplemented");
+                log_with_level!(true, self.settings.logging.http_error, "501 unimplemented");
                 http.set_status(code, "Not Implemented".into());
                 http.close(b"").await?;
             }
 
             _ => {
-                log_with_level!(loglevels::HTTP_ERRORS, "{code} {reason}");
+                log_with_level!(true, self.settings.logging.http_error, "{code} {reason}");
                 http.set_status(code, "Error".into());
                 http.close(format!("{reason} {detail}").as_bytes()).await?;
             }
@@ -307,6 +332,9 @@ impl SamicppHandler {
         }
         else if file_path.is_dir() {
             self.dir_handler(http, cinfo, conf, path, file_path, real_path).await
+        }
+        else if !file_path.exists() {
+            self.error(http, cinfo, conf, 404, path, file_path, "doesnt exist", "detail").await
         }
         else {
             self.error(http, cinfo, conf, 501, path, file_path, "reason", "detail").await
@@ -349,8 +377,10 @@ impl SamicppHandler {
         if name.ends_with(".blank") {
             http.set_status(204, "No Content".into());
             http.close(b"").await?;
+            log_with_level!(true, self.settings.logging.response, "204 No Content");
         }
         else if name.ends_with(".download") {
+            log_with_level!(false, self.settings.logging.file_type_info, "file is download file");
             let name = name.strip_suffix(".download").unwrap_or(&name);
             let mime = *MIME_TYPES.get(last.strip_suffix(".download").unwrap_or(last)).unwrap_or(&"application/octet-stream");
             
@@ -381,8 +411,10 @@ impl SamicppHandler {
                     http.close(&fin).await?;
                 }
             }
+            log_with_level!(true, self.settings.logging.response, "{:?} 200 Download", file_path);
         }
         else if name.contains(".var.") || name.ends_with(".redirect") || name.ends_with(".link") {
+            log_with_level!(false, self.settings.logging.file_type_info, "file is var, redirect, or link");
             http.set_header("Content-Type", mime);
             
             let mut content = String::new();
@@ -433,6 +465,7 @@ impl SamicppHandler {
 
             if name.contains(".var.") {
                 http.close(content.as_bytes()).await?;
+                log_with_level!(true, self.settings.logging.response, "{:?} 200", file_path);
             } 
             else if name.ends_with(".redirect") {
                 let location = content.replace("\n", "");
@@ -449,13 +482,16 @@ impl SamicppHandler {
                 http.set_status(code, "Found".to_owned());
                 http.set_header("Location", location.trim());
                 http.close(b"").await?;
+                log_with_level!(true, self.settings.logging.response, "'{}' 302 Found", location);
             }
             else if name.ends_with(".link") {
+                log_with_level!(false, self.settings.logging.file_processing_info, "passing link back into path handler");
                 let link = Path::new(&content);
                 Box::pin(self.dir_or_file(http, cinfo, conf, path, link, real_path)).await?;
             }
         }
         else {
+            log_with_level!(false, self.settings.logging.file_type_info, "regular file");
             let mime = *MIME_TYPES.get(last.strip_suffix(".gz").or(last.strip_suffix(".br")).unwrap_or(last)).unwrap_or(&"application/octet-stream");
 
             http.set_header("Content-Type", mime);
@@ -508,6 +544,8 @@ impl SamicppHandler {
             };
 
             if let Some(ranges) = &ranges && ranges.len() == 1 {
+                log_with_level!(false, self.settings.logging.file_processing_info, "client requested range");
+
                 let range = ranges[0].clone();
                 http.set_status(206, "Partial Content".to_owned());
 
@@ -544,10 +582,13 @@ impl SamicppHandler {
                             http.close(&fin).await?;
                         }
                     }
-                }
 
+                    log_with_level!(true, self.settings.logging.response, "{:?} 200", file_path);
+                }
             }
             else if let Some(ranges) = ranges {
+                log_with_level!(false, self.settings.logging.file_processing_info, "client requested multiple ranges");
+
                 let boundary = "aGV5IGhvdyBhcmUgeW91";
                 http.set_header("Content-Type", &format!("multipart/byteranges; boundary={boundary}"));
 
@@ -593,12 +634,16 @@ impl SamicppHandler {
 
                 if !errored {
                     http.close(format!("--{boundary}--\r\n").as_bytes()).await?;
+
+                    log_with_level!(true, self.settings.logging.response, "{:?} 200", file_path);
                 }
             }
             else if meta.len() < self.settings.content.max_file_read_size as u64 {
                 let mut out = vec![0u8; meta.len() as usize];
                 file.read_exact(&mut out).await?;
                 http.close(&out).await?;
+                
+                log_with_level!(true, self.settings.logging.response, "{:?} 200", file_path);
             }
             else {
                 let mut chunk = vec![0u8; self.settings.content.file_chunk_size];
@@ -618,7 +663,10 @@ impl SamicppHandler {
                     file.read_exact(&mut fin).await?;
                     http.close(&fin).await?;
                 }
+
+                log_with_level!(true, self.settings.logging.response, "{:?} 200", file_path);
             }
+
         }
 
         Ok(())

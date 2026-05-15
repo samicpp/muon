@@ -124,10 +124,17 @@ pub struct ContentSettings {
     pub file_chunk_size: usize,
 }
 
+#[inline] const fn def_false() -> bool { false }
+
+// TODO: allow setting these with a loglevel
 #[derive(Debug, Deserialize, Default)]
 pub struct LogSettings {
-    pub loglevel: Option<u64>,
+    pub loglevel: Option<i16>,
     pub loglevel_template: Option<String>,
+    #[serde(default = "def_false")]
+    pub enable_all: bool,
+    #[serde(default = "def_false")]
+    pub disable_all: bool,
 
     pub init_error: Option<bool>,
     pub exit: Option<bool>,
@@ -143,7 +150,178 @@ pub struct LogSettings {
     pub routes_error: Option<bool>,
     pub routes_update: Option<bool>,
     pub route_dump: Option<bool>,
+    pub http_error: Option<bool>,
+    pub http_error_detailed: Option<bool>,
+    pub ip_dump: Option<bool>,
+    pub file_type_info: Option<bool>,
+    pub file_processing_info: Option<bool>,
 }
+impl LogSettings {
+    pub const fn default() -> Self {
+        Self { 
+            loglevel: None,
+            loglevel_template: None,
+            enable_all: false,
+            disable_all: false,
+
+            init_error: None,
+            exit: None,
+            client_dump: None,
+            request: None,
+            response: None,
+            response_time: None,
+            handler_error: None,
+            tls_upgrade_error: None,
+            content_handler_error: None,
+            http2_error: None,
+            http2_frame_dump: None,
+            routes_error: None,
+            routes_update: None,
+            route_dump: None,
+            http_error: None,
+            http_error_detailed: None,
+            ip_dump: None,
+            file_type_info: None,
+            file_processing_info: None,
+        }
+    }
+    pub fn disable_all(&mut self) {
+        *self = Self { 
+            loglevel: self.loglevel,
+            loglevel_template: self.loglevel_template.clone(),
+            enable_all: self.enable_all,
+            disable_all: self.disable_all,
+
+            init_error: Some(false), 
+            exit: Some(false), 
+            client_dump: Some(false), 
+            request: Some(false), 
+            response: Some(false), 
+            response_time: Some(false), 
+            handler_error: Some(false), 
+            tls_upgrade_error: Some(false), 
+            content_handler_error: Some(false), 
+            http2_error: Some(false), 
+            http2_frame_dump: Some(false), 
+            routes_error: Some(false), 
+            routes_update: Some(false), 
+            route_dump: Some(false), 
+            http_error: Some(false), 
+            http_error_detailed: Some(false), 
+            ip_dump: Some(false), 
+            file_type_info: Some(false), 
+            file_processing_info: Some(false),
+        }
+    }
+    pub fn enable_all(&mut self) {
+        *self = Self { 
+            loglevel: self.loglevel,
+            loglevel_template: self.loglevel_template.clone(),
+            enable_all: self.enable_all,
+            disable_all: self.disable_all,
+
+            init_error: Some(true),
+            exit: Some(true),
+            client_dump: Some(true),
+            request: Some(true),
+            response: Some(true),
+            response_time: Some(true),
+            handler_error: Some(true),
+            tls_upgrade_error: Some(true),
+            content_handler_error: Some(true),
+            http2_error: Some(true),
+            http2_frame_dump: Some(true),
+            routes_error: Some(true),
+            routes_update: Some(true),
+            route_dump: Some(true),
+            http_error: Some(true),
+            http_error_detailed: Some(true),
+            ip_dump: Some(true),
+            file_type_info: Some(true),
+            file_processing_info: Some(true),
+        }
+
+    }
+    pub fn _unset_all(&mut self) {
+        *self = Self { 
+            loglevel: self.loglevel,
+            loglevel_template: self.loglevel_template.clone(),
+            enable_all: self.enable_all,
+            disable_all: self.disable_all,
+
+            ..Self::default()
+        }
+    }
+
+    pub fn update_loglevel(&mut self, level: i16, restv: bool) {
+        let mut rest = false;
+        // debug
+        if level & 1 != 0 {
+            self.http2_error = Some(true);
+            self.http2_frame_dump = Some(true);
+            self.route_dump = Some(true);
+            self.file_processing_info = Some(true);
+            rest = restv;
+        }
+        // verbose
+        if rest || level & 2 != 0 {
+            self.ip_dump = Some(true);
+            self.routes_update = Some(true);
+            self.file_type_info = Some(true);
+            self.http_error_detailed = Some(true);
+            rest = restv;
+        }
+        // log
+        if rest || level & 4 != 0 {
+            self.response_time = Some(true);
+            rest = restv;
+        }
+        // info
+        if rest || level & 8 != 0 {
+            self.exit = Some(true);
+            self.request = Some(true);
+            self.response = Some(true);
+            rest = restv;
+        }
+        // warning
+        if rest || level & 16 != 0 {
+            self.routes_error = Some(true);
+            self.http_error = Some(true);
+            rest = restv;
+        }
+        // error
+        if rest || level & 32 != 0 {
+            self.routes_error = Some(true);
+            self.http_error = Some(true);
+            rest = restv;
+        }
+        // critical error
+        if rest || level & 64 != 0 {
+            self.handler_error = Some(true);
+            self.content_handler_error = Some(true);
+            self.tls_upgrade_error = Some(true);
+            rest = restv;
+        }
+        // fatal error
+        if rest || level & 128 != 0 {
+            self.init_error = Some(true);
+        }
+    }
+    pub fn update_loglevel_template(&mut self, level: &str) {
+        match level {
+            "debug" => self.update_loglevel(1, true),
+            "verbose" => self.update_loglevel(2, true),
+            "log" => self.update_loglevel(4, true),
+            "info" => self.update_loglevel(8, true),
+            "warning" => self.update_loglevel(16, true),
+            "error" => self.update_loglevel(32, true),
+            "critical-error" => self.update_loglevel(64, true),
+            "fatal-error" => self.update_loglevel(128, true),
+            _ => ()
+        }
+    }
+}
+
 
 // #[derive(Debug, Deserialize, Default)]
 // pub struct SystemSettings { }
