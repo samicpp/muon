@@ -1,0 +1,6 @@
+[build]
+rustflags = [
+    # "-C", "link-arg=-Wl,--whole-archive",
+    # "-C", "link-arg=-Wl,-export-dynamic",
+    "-C", "link-args=-rdynamic",
+]

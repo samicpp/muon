@@ -68,34 +68,43 @@ fn main() {
 
     let mut settings = settings.unwrap_or_default();
 
-    if settings.logging.enable_all { settings.logging.enable_all(); }
-    if settings.logging.disable_all { settings.logging.disable_all(); }
+    if settings.logging.enable_unset { settings.logging.enable_unset(); }
+    if settings.logging.disable_unset { settings.logging.disable_unset(); }
     if let Some(level) = settings.logging.loglevel { settings.logging.update_loglevel(level, false); }
     if let Some(level) = settings.logging.loglevel_template.clone() { settings.logging.update_loglevel_template(&level); }
 
     settings.logging = LogSettings { 
         loglevel: settings.logging.loglevel,
         loglevel_template: settings.logging.loglevel_template.clone(),
-        enable_all: settings.logging.enable_all,
-        disable_all: settings.logging.disable_all,
+        enable_unset: settings.logging.enable_unset,
+        disable_unset: settings.logging.disable_unset,
 
+        
         init_error: initial_logging.init_error.or(settings.logging.init_error),
         exit: initial_logging.exit.or(settings.logging.exit),
+
+        ip_dump: initial_logging.ip_dump.or(settings.logging.ip_dump),
         client_dump: initial_logging.client_dump.or(settings.logging.client_dump),
+
         request: initial_logging.request.or(settings.logging.request),
         response: initial_logging.response.or(settings.logging.response),
         response_time: initial_logging.response_time.or(settings.logging.response_time),
+
         handler_error: initial_logging.handler_error.or(settings.logging.handler_error),
         tls_upgrade_error: initial_logging.tls_upgrade_error.or(settings.logging.tls_upgrade_error),
         content_handler_error: initial_logging.content_handler_error.or(settings.logging.content_handler_error),
+
         http2_error: initial_logging.http2_error.or(settings.logging.http2_error),
         http2_frame_dump: initial_logging.http2_frame_dump.or(settings.logging.http2_frame_dump),
+
         routes_error: initial_logging.routes_error.or(settings.logging.routes_error),
         routes_update: initial_logging.routes_update.or(settings.logging.routes_update),
+        routes_warning: initial_logging.routes_warning.or(settings.logging.routes_warning),
         route_dump: initial_logging.route_dump.or(settings.logging.route_dump),
+
         http_error: initial_logging.http_error.or(settings.logging.http_error),
         http_error_detailed: initial_logging.http_error_detailed.or(settings.logging.http_error_detailed),
-        ip_dump: initial_logging.ip_dump.or(settings.logging.ip_dump),
+
         file_type_info: initial_logging.file_type_info.or(settings.logging.file_type_info),
         file_processing_info: initial_logging.file_processing_info.or(settings.logging.file_processing_info),
     };

@@ -1,46 +1,76 @@
-use std::{collections::HashMap, ops::Range, path::{Path, PathBuf}, sync::{Arc, RwLock}, time::SystemTime};
+use std::{collections::HashMap, ops::Range, path::{Path, PathBuf}, ptr, sync::{Arc, RwLock}, time::SystemTime};
 
 use dashmap::DashMap;
-use photon::shared::{HttpSocket, LibError, LibResult};
+use libloading::Library;
+use photon::{httprs_core::ffi::futures::FfiFuture, shared::{HttpSocket, LibError, LibResult}};
 use regex::Regex;
 use serde::Deserialize;
 use tokio::{fs::File, io::{AsyncReadExt, AsyncSeekExt}};
 use base64::{Engine, engine::general_purpose::STANDARD as b64std};
 
-use crate::{AorB, DynHttpSocket, arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::log_client_simple, servers::GenAddr, settings::Settings};
+use crate::{AorB, DynHttpSocket, arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::log_client_simple, servers::GenAddr, settings::{OneOrMany, Settings, def_false}};
 use owo_colors::OwoColorize;
 
 pub mod builtin;
 pub mod deno_scripting;
+// pub mod force_symbol_exports;
 
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct RouteConfig {
-    #[serde(alias = "match-type")]
     pub match_type: MatchType,
+
+    #[serde(skip)]
+    pub regex: Option<Regex>,
+
     #[serde(alias = "dir")]
     pub directory: String,
     pub router: Option<String>,
     pub auth: Option<String>,
-    pub builtin: Option<String>,
-    #[serde(alias = "404")]
-    pub e404_file: Option<String>,
-    #[serde(alias = "409")]
-    pub e409_file: Option<String>,
+    pub middleware: Option<OneOrMany<String>>,
+
+    #[serde(default = "def_false")]
+    pub allow_invalid_clients: bool,
+    pub forbid: Option<String>,
+    pub forbid_end: Option<OneOrMany<String>>,
+    pub forbid_start: Option<OneOrMany<String>>,
     #[serde(skip)]
-    pub regex: Option<Regex>,
+    pub forbid_regex: Option<Regex>,
+
+    pub e400_file: Option<String>,
+    pub e403_file: Option<String>,
+    pub e404_file: Option<String>,
+    pub e409_file: Option<String>,
+    pub e416_file: Option<String>,
+    pub e500_file: Option<String>,
+    pub e501_file: Option<String>,
 }
 impl Default for RouteConfig {
     fn default() -> Self {
         Self { 
             match_type: MatchType::Host, 
+
+            regex: None,
+
             directory: ".".into(), 
             router: None, 
             auth: None, 
-            builtin: None, 
+            middleware: None, 
+
+            allow_invalid_clients: false,
+            forbid: None, 
+            forbid_end: None, 
+            forbid_start: None, 
+            forbid_regex: None, 
+
+            e400_file: None, 
+            e403_file: None, 
             e404_file: None, 
             e409_file: None, 
-            regex: None,
+            e416_file: None, 
+            e500_file: None, 
+            e501_file: None, 
         }
     }
 }
@@ -59,7 +89,14 @@ pub enum MatchType {
     Type,
     Domain,
 }
+pub struct FfiModule {
+    #[allow(dead_code)]
+    pub lib: Library,
+    pub mtime: SystemTime,
+    pub handle: unsafe extern "C" fn(*mut FfiFuture, *mut DynHttpSocket) -> (),
+}
 pub struct SamicppHandler {
+    #[allow(dead_code)]
     pub args: Arc<Cli>,
     pub settings: Arc<Settings>,
 
@@ -67,7 +104,10 @@ pub struct SamicppHandler {
     pub routes: RwLock<HashMap<String, Arc<RouteConfig>>>,
     pub routes_cache: DashMap<String, Arc<RouteConfig>>,
     pub routes_path: PathBuf,
+
+    pub ffi_modules: DashMap<PathBuf, FfiModule>,
 }
+
 
 fn starts_with_case_insensitive<A: AsRef<str>, B: AsRef<str>>(haystack: A, needle: B) -> bool {
     let haystack = haystack.as_ref();
@@ -111,6 +151,7 @@ async fn authenticate(http: &mut DynHttpSocket, realm: &str, usrpass: &[u8]) -> 
     Ok(false)
 }
 
+
 #[async_trait::async_trait]
 impl HttpHandler for SamicppHandler {
     async fn entry(self: Arc<Self>, mut http: DynHttpSocket, cinfo: ClientInfo) -> Result<(), LibError> {
@@ -137,7 +178,7 @@ impl HttpHandler for SamicppHandler {
         let default = 
         if let Some(def) = self.routes_cache.get("default") { def.clone() }
         else {
-            elog_with_level!(true, self.settings.logging.routes_error, "no default entry in routes");
+            elog_with_level!(true, self.settings.logging.routes_warning, "no default entry in routes");
             Arc::new(RouteConfig::default())
         };
         if let Some(conf) = self.routes_cache.get(&pfullhost) {
@@ -181,7 +222,11 @@ impl HttpHandler for SamicppHandler {
         let fin_path = Path::new(&self.settings.content.serve_dir).join(&route.directory).join(&path);
 
 
-        if let Some(usrpass) = &route.auth && !authenticate(&mut http, &fullhost, usrpass.as_bytes()).await? {
+        if !client.valid && !route.allow_invalid_clients {
+            self.error(&mut http, &cinfo, &route, 400, &path, &path, "no invalid clients allowed", "detail").await?;
+        }
+
+        else if let Some(usrpass) = &route.auth && !authenticate(&mut http, &fullhost, usrpass.as_bytes()).await? {
 
         }
 
@@ -216,6 +261,7 @@ impl SamicppHandler {
             routes: RwLock::new(HashMap::new()),
             routes_cache: DashMap::new(),
             routes_path,
+            ffi_modules: DashMap::new(),
         }
     }
 
@@ -233,6 +279,9 @@ impl SamicppHandler {
                 for (k, mut v) in map {
                     if v.match_type == MatchType::Regex {
                         v.regex = Regex::new(&k).ok();
+                    }
+                    if let Some(pat) = &v.forbid {
+                        v.forbid_regex = Regex::new(pat).ok();
                     }
                     nmap.insert(k, Arc::new(v));
                 }
@@ -262,7 +311,7 @@ impl SamicppHandler {
     async fn error(&self, http: &mut DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, code: u16, path: &Path, target_path: &Path, reason: &str, detail: &str) -> LibResult<()> { 
         http.set_header("Content-Type", "text/plain");
 
-        if self.settings.logging.http_error.unwrap_or(true) {
+        if self.settings.logging.http_error_detailed.unwrap_or(true) {
             println!("{path:?} {target_path:?} {code} {reason} {detail}");
         }
 
@@ -270,7 +319,26 @@ impl SamicppHandler {
             400 => {
                 log_with_level!(true, self.settings.logging.http_error, "400 bad request");
                 http.set_status(code, "Bad Request".into());
-                http.close(b"broken request").await?;
+
+                if let Some(e400) = &conf.e400_file {
+                    let e400_path = Path::new(&self.settings.content.serve_dir).join(&conf.directory).join(e400);
+                    Box::pin(self.file_handler(http, cinfo, conf, path, &e400_path, target_path)).await?;
+                }
+                else {
+                    http.close(b"broken request").await?;
+                }
+            }
+            403 => {
+                log_with_level!(true, self.settings.logging.http_error, "403 forbidden {target_path:?}");
+                http.set_status(code, "Forbidden".into());
+                
+                if let Some(e403) = &conf.e403_file {
+                    let e403_path = Path::new(&self.settings.content.serve_dir).join(&conf.directory).join(e403);
+                    Box::pin(self.file_handler(http, cinfo, conf, path, &e403_path, target_path)).await?;
+                }
+                else { 
+                    http.close(format!("forbidden").as_bytes()).await?; 
+                }
             }
             404 => {
                 log_with_level!(true, self.settings.logging.http_error, "404 not found {target_path:?}");
@@ -283,7 +351,6 @@ impl SamicppHandler {
                 else { 
                     http.close(format!("couldnt find {path:?}").as_bytes()).await?; 
                 }
-
             }
             409 => {
                 log_with_level!(true, self.settings.logging.http_error, "409 conflict {target_path:?} {reason}");
@@ -300,19 +367,40 @@ impl SamicppHandler {
             416 => {
                 log_with_level!(true, self.settings.logging.http_error, "416 Range Not Satisfiable {target_path:?} {reason}");
                 http.set_status(code, "Range Not Satisfiable".into());
-                http.close(format!("Range Not Satisfiable. {reason}").as_bytes()).await?;
+
+                if let Some(e416 ) = &conf.e416_file {
+                    let e416_path = Path::new(&self.settings.content.serve_dir).join(&conf.directory).join(e416);
+                    Box::pin(self.file_handler(http, cinfo, conf, path, &e416_path, target_path)).await?;
+                }
+                else {
+                    http.close(format!("Range Not Satisfiable. {reason}").as_bytes()).await?;
+                }
             }
 
             500 => {
                 log_with_level!(true, self.settings.logging.http_error, "500 internal server error");
                 log_with_level!(true, self.settings.logging.http_error, "{}: {}", reason.red(), detail.red());
                 http.set_status(code, "Internal Server Error".into());
-                http.close(format!("something went wrong\r\n{reason}").as_bytes()).await?;
+
+                if let Some(e500) = &conf.e500_file {
+                    let e500_path = Path::new(&self.settings.content.serve_dir).join(&conf.directory).join(e500);
+                    Box::pin(self.file_handler(http, cinfo, conf, path, &e500_path, target_path)).await?;
+                }
+                else {
+                    http.close(format!("something went wrong\r\n{reason}").as_bytes()).await?;
+                }
             }
             501 => {
                 log_with_level!(true, self.settings.logging.http_error, "501 unimplemented");
                 http.set_status(code, "Not Implemented".into());
-                http.close(b"").await?;
+
+                if let Some(e501) = &conf.e501_file {
+                    let e501_path = Path::new(&self.settings.content.serve_dir).join(&conf.directory).join(e501);
+                    Box::pin(self.file_handler(http, cinfo, conf, path, &e501_path, target_path)).await?;
+                }
+                else {
+                    http.close(b"not implemented").await?;
+                }
             }
 
             _ => {
@@ -374,46 +462,21 @@ impl SamicppHandler {
         let mime = *MIME_TYPES.get(last).unwrap_or(&"application/octet-stream");
         let mut file = File::open(file_path).await?;
 
-        if name.ends_with(".blank") {
+        let forbidden = 
+            conf.forbid_regex.as_ref().map(|r| r.is_match(&name)).unwrap_or(false) ||
+            conf.forbid_end.as_ref().map(|vs| vs.get().iter().any(|v| name.ends_with(v))).unwrap_or(false) || 
+            conf.forbid_start.as_ref().map(|vs| vs.get().iter().any(|v| name.ends_with(v))).unwrap_or(false);
+
+        if forbidden {
+            self.error(http, cinfo, conf, 403, path, file_path, "forbidden by config", "access to this file was denied").await?;
+        }
+        else if name.ends_with(".blank") {
             http.set_status(204, "No Content".into());
             http.close(b"").await?;
             log_with_level!(true, self.settings.logging.response, "204 No Content");
         }
-        else if name.ends_with(".download") {
-            log_with_level!(false, self.settings.logging.file_type_info, "file is download file");
-            let name = name.strip_suffix(".download").unwrap_or(&name);
-            let mime = *MIME_TYPES.get(last.strip_suffix(".download").unwrap_or(last)).unwrap_or(&"application/octet-stream");
-            
-            http.set_header("Content-Type", mime);
-            http.set_header("Content-Disposition", &format!("attachment; filename={name}"));
-
-            if meta.len() < self.settings.content.max_file_read_size as u64 {
-                let mut out = vec![0u8; meta.len() as usize];
-                file.read_exact(&mut out).await?;
-                http.close(&out).await?;
-            }
-            else {
-                let mut chunk = vec![0u8; self.settings.content.file_chunk_size];
-                let count = meta.len() / self.settings.content.file_chunk_size as u64;
-                let remain = meta.len() % self.settings.content.file_chunk_size as u64;
-                http.set_header("Content-Length", &meta.len().to_string());
-
-                for _ in 0..count {
-                    file.read_exact(&mut chunk).await?;
-                    http.write(&chunk).await?;
-                }
-                
-                if count == 0 {
-                    http.close(b"").await?;
-                } else {
-                    let mut fin = vec![0u8; remain as usize];
-                    file.read_exact(&mut fin).await?;
-                    http.close(&fin).await?;
-                }
-            }
-            log_with_level!(true, self.settings.logging.response, "{:?} 200 Download", file_path);
-        }
         else if name.contains(".var.") || name.ends_with(".redirect") || name.ends_with(".link") {
+            // TODO: constrain var files to the file size limits
             log_with_level!(false, self.settings.logging.file_type_info, "file is var, redirect, or link");
             http.set_header("Content-Type", mime);
             
@@ -490,11 +553,55 @@ impl SamicppHandler {
                 Box::pin(self.dir_or_file(http, cinfo, conf, path, link, real_path)).await?;
             }
         }
+        else if name.ends_with(".ffi.so") || name.ends_with(".ffi.dll") || name.ends_with(".ffi.dylib") {
+            log_with_level!(false, self.settings.logging.file_type_info, "file is ffi module");
+            let mut fut = FfiFuture::new(None, ptr::null_mut());
+
+            unsafe {
+                if let Some(lib) = self.ffi_modules.get(file_path) && lib.mtime >= meta.modified().unwrap_or(SystemTime::UNIX_EPOCH) {
+                    let handle = &(*lib).handle;
+                    handle((&mut fut) as *mut _, http as *mut _);
+                    let _ = drop(lib);
+                }
+                else {
+                    let lib = libloading::Library::new(file_path).map_err(|_| LibError::Io(std::io::Error::new(std::io::ErrorKind::Other, "couldnt open library")))?;
+                    let init: libloading::Symbol<unsafe extern "C" fn() -> ()> = lib.get("init_muon_handler").map_err(|_| LibError::Io(std::io::Error::new(std::io::ErrorKind::Other, "couldnt find symbol init_muon_handler")))?;
+                    let handle: libloading::Symbol<unsafe extern "C" fn(*mut FfiFuture, *mut DynHttpSocket) -> ()> = lib.get("muon_handler").map_err(|_| LibError::Io(std::io::Error::new(std::io::ErrorKind::Other, "couldnt find symbol init_muon_handler")))?;
+                    let handle = *handle;
+                    init();
+                    handle((&mut fut) as *mut _, http as *mut _);
+                    self.ffi_modules.insert(file_path.to_owned(), FfiModule { lib, mtime: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), handle });
+                }
+            }
+            let _ = fut.await;
+            log_with_level!(true, self.settings.logging.response, "{:?} 0 Done", file_path);
+        }
         else {
             log_with_level!(false, self.settings.logging.file_type_info, "regular file");
-            let mime = *MIME_TYPES.get(last.strip_suffix(".gz").or(last.strip_suffix(".br")).unwrap_or(last)).unwrap_or(&"application/octet-stream");
+            
+            let name = 
+            if name.ends_with(".gz") {
+                http.set_header("Content-Encoding", "gzip");
+                name.strip_suffix(".gz").unwrap_or(&name)
+            }
+            else if name.ends_with(".br") {
+                http.set_header("Content-Encoding", "br");
+                name.strip_suffix(".br").unwrap_or(&name)
+            }
+            else {
+                &name
+            };
 
+            if name.ends_with(".download") {
+                let name = name.strip_suffix(".download").unwrap_or(&name);
+                http.set_header("Content-Disposition", &format!("attachment; filename={name}"));
+            }
+
+            let dots: Vec<&str> = name.split(".").collect();
+            let last = *dots.last().unwrap_or(&"");
+            let mime = *MIME_TYPES.get(last).unwrap_or(&"application/octet-stream");
             http.set_header("Content-Type", mime);
+
             http.set_header("Accept-Ranges", "bytes");
             // http.set_header("ETag", &format!("\"{}\"", meta.len(), meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())).unwrap_or(0)));
             

@@ -51,8 +51,11 @@ or fork the repo and open a pull request. <br/>
 - [x] support redirect, var, and link files
 - [x] support download files
 - [x] support route level auth
-- [ ] support FFI handler endpoints
+- [x] support FFI handler endpoints
 - [ ] embed Deno engine to execute javascript
+- [ ] allow stopping the servers / listeners
+- [ ] embed rhai
+- [ ] make some built in method of making services through data driven behaviour
 
 ## Examples
 settings.toml

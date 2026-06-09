@@ -1,6 +1,6 @@
 [package]
 name = "muon"
-version = "1.4.0"
+version = "1.5.0"
 edition = "2024"
 
 [dependencies]
@@ -24,6 +24,8 @@ phf = { version = "0.13.1", features = ["macros"] }
 psl = "2.1.209"
 base64 = "=0.22.1"
 
+libloading = "0.9.0"
+
 [features]
 default = ["unix-sockets", "handler-simple", "handler-samicpp", "aws-lc-rs"]
 
@@ -33,3 +35,4 @@ aws-lc-rs = ["photon/aws-lc-rs", "rustls/aws-lc-rs"]
 
 handler-simple = []
 handler-samicpp = []
+
