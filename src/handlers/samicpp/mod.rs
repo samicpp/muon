@@ -267,7 +267,7 @@ impl SamicppHandler {
 
     async fn update_config(&self) -> Result<bool, AorB<std::io::Error, serde_json::Error>> {
         // let routes = Path::new(&self.settings.content.serve_dir).join(self.args.routes.as_deref().or(self.settings.content.routes_name.as_deref()).unwrap_or("routes.json"));
-        if let Ok(meta) = self.routes_path.metadata() {
+        if let Ok(meta) = tokio::fs::metadata(&self.routes_path).await {
             let modified = meta.modified().map_err(AorB::A)?;
             if *self.routes_modified.read().unwrap() < modified {
                 let file = tokio::fs::read(&self.routes_path).await.map_err(AorB::A)?;
@@ -431,31 +431,35 @@ impl SamicppHandler {
     async fn dir_handler(&self, http: &mut DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> { 
         let name = file_path.file_name().map(|s| s.to_string_lossy()).unwrap_or("index".into());
 
-        let mut found = None;
-        let mut dir = tokio::fs::read_dir(&file_path).await?;
-        while let Some(file) = dir.next_entry().await? {
-            if 
-                file.metadata().await.map(|m| m.is_file()).unwrap_or(false) && 
-                (
-                    file.file_name().to_string_lossy().starts_with(name.as_ref()) || 
-                    file.file_name().to_string_lossy().starts_with("index")
-                ) 
-            {
-                found = Some(file);
-                break;
-            }
+        if tokio::fs::try_exists(file_path.join("/.muon_dont_serve")).await? {
+            self.error(http, cinfo, conf, 403, path, file_path, "cant serve dir", "serving has been disabled for current dir").await
         }
-
-        if let Some(found) = found {
-            self.file_handler(http, cinfo, conf, path, &found.path(), real_path).await
-        } 
         else {
-            self.error(http, cinfo, conf, 409, path, file_path, "no files found", "detail").await
+            let mut found = None;
+            let mut dir = tokio::fs::read_dir(&file_path).await?;
+            while let Some(file) = dir.next_entry().await? {
+                if 
+                    file.metadata().await.map(|m| m.is_file()).unwrap_or(false) && 
+                    (
+                        file.file_name().to_string_lossy().starts_with(name.as_ref()) || 
+                        file.file_name().to_string_lossy().starts_with("index")
+                    ) 
+                {
+                    found = Some(file);
+                    break;
+                }
+            }
+
+            if let Some(found) = found {
+                self.file_handler(http, cinfo, conf, path, &found.path(), real_path).await
+            } 
+            else {
+                self.error(http, cinfo, conf, 409, path, file_path, "no files found", "detail").await
+            }
         }
     }
     async fn file_handler(&self, http: &mut DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> { 
-
-        let meta = file_path.metadata()?;
+        let meta = tokio::fs::metadata(file_path).await?;
         let name = file_path.file_name().map(|s| s.to_string_lossy()).unwrap_or("".into());
         let dots: Vec<&str> = name.split(".").collect();
         let last = *dots.last().unwrap_or(&"");

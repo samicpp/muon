@@ -44,6 +44,7 @@ or fork the repo and open a pull request. <br/>
 - [ ] create runtime stdin console
 - [ ] allow reloading settings file
 - [ ] enable loading FFI modules
+- [ ] support forwarding the request by proxying
 
 ## TODO::Features::SamicppHandler
 - [x] support serving files
