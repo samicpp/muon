@@ -636,7 +636,7 @@ pub async fn handle(
 
         else if allow_h2c { possible_h2c(settings, handler, http1, cinfo, None).await?; }
         else {
-            http1.set_header("Connection", "close");
+            http1.set_header("Connection", "close".into());
             match handler.entry(http1.into(), cinfo).await {
                 Ok(()) => {},
                 Err(err) => elog_with_level!(true, settings.logging.content_handler_error, "{err}"),

@@ -21,8 +21,8 @@ impl HttpHandler for SimpleHandler{
         if self.settings.logging.client_dump.unwrap_or(false) { dbg!(client); }
         log_with_level!(true, self.settings.logging.request, "\x1b[90m[{:?}]\x1b[0m {}", client_info.addr, log_client_simple(client));
 
-        http.set_header("Server", "simple-serve");
-        http.set_header("Content-Type", "text/plain");
+        http.set_header("Server", "simple-serve".into());
+        http.set_header("Content-Type", "text/plain".into());
 
         if !path.exists() {
             status = 404;
@@ -77,7 +77,7 @@ impl SimpleHandler {
             let last = name.split(".").last().unwrap_or("");
             let mime = *MIME_TYPES.get(last).unwrap_or(&"application/octet-stream");
 
-            http.set_header("Content-Type", mime);
+            http.set_header("Content-Type", mime.into());
 
             http.close(&tokio::fs::read(path).await?).await?;
         }

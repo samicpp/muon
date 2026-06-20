@@ -86,7 +86,7 @@ dependencies = [
 
 [[package]]
 name = "asyncffi"
-version = "3.4.3"
+version = "3.5.0"
 dependencies = [
  "dashmap",
  "http",
@@ -410,7 +410,7 @@ dependencies = [
 
 [[package]]
 name = "httprs_core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-ffi",
  "tokio",
@@ -521,7 +521,7 @@ dependencies = [
 
 [[package]]
 name = "muon"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "async-trait",
  "base64",

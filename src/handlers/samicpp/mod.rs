@@ -145,8 +145,8 @@ async fn authenticate(http: &mut DynHttpSocket, realm: &str, usrpass: &[u8]) -> 
         }
     }
     http.set_status(401, "Unauthorized".to_owned());
-    http.set_header("WWW-Authenticate", &format!("Basic realm=\"{realm}\", charset=\"UTF-8\""));
-    http.set_header("Content-Length", "0");
+    http.set_header("WWW-Authenticate", format!("Basic realm=\"{realm}\", charset=\"UTF-8\""));
+    http.set_header("Content-Length", "0".into());
     http.close(b"").await?;
     Ok(false)
 }
@@ -309,7 +309,7 @@ impl SamicppHandler {
     }
 
     async fn error(&self, http: &mut DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, code: u16, path: &Path, target_path: &Path, reason: &str, detail: &str) -> LibResult<()> { 
-        http.set_header("Content-Type", "text/plain");
+        http.set_header("Content-Type", "text/plain".into());
 
         if self.settings.logging.http_error_detailed.unwrap_or(true) {
             println!("{path:?} {target_path:?} {code} {reason} {detail}");
@@ -482,7 +482,7 @@ impl SamicppHandler {
         else if name.contains(".var.") || name.ends_with(".redirect") || name.ends_with(".link") {
             // TODO: constrain var files to the file size limits
             log_with_level!(false, self.settings.logging.file_type_info, "file is var, redirect, or link");
-            http.set_header("Content-Type", mime);
+            http.set_header("Content-Type", mime.into());
             
             let mut content = String::new();
             file.read_to_string(&mut content).await?;
@@ -547,7 +547,7 @@ impl SamicppHandler {
                 };
 
                 http.set_status(code, "Found".to_owned());
-                http.set_header("Location", location.trim());
+                http.set_header("Location", location.trim().into());
                 http.close(b"").await?;
                 log_with_level!(true, self.settings.logging.response, "'{}' 302 Found", location);
             }
@@ -585,11 +585,11 @@ impl SamicppHandler {
             
             let name = 
             if name.ends_with(".gz") {
-                http.set_header("Content-Encoding", "gzip");
+                http.set_header("Content-Encoding", "gzip".into());
                 name.strip_suffix(".gz").unwrap_or(&name)
             }
             else if name.ends_with(".br") {
-                http.set_header("Content-Encoding", "br");
+                http.set_header("Content-Encoding", "br".into());
                 name.strip_suffix(".br").unwrap_or(&name)
             }
             else {
@@ -598,19 +598,19 @@ impl SamicppHandler {
 
             if name.ends_with(".download") {
                 let name = name.strip_suffix(".download").unwrap_or(&name);
-                http.set_header("Content-Disposition", &format!("attachment; filename={name}"));
+                http.set_header("Content-Disposition", format!("attachment; filename={name}"));
             }
 
             let dots: Vec<&str> = name.split(".").collect();
             let last = *dots.last().unwrap_or(&"");
             let mime = *MIME_TYPES.get(last).unwrap_or(&"application/octet-stream");
-            http.set_header("Content-Type", mime);
+            http.set_header("Content-Type", mime.into());
 
-            http.set_header("Accept-Ranges", "bytes");
+            http.set_header("Accept-Ranges", "bytes".into());
             // http.set_header("ETag", &format!("\"{}\"", meta.len(), meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())).unwrap_or(0)));
             
-            if name.ends_with(".gz") { http.set_header("Content-Encoding", "gzip"); }
-            if name.ends_with(".br") { http.set_header("Content-Encoding", "br"); }
+            if name.ends_with(".gz") { http.set_header("Content-Encoding", "gzip".into()); }
+            if name.ends_with(".br") { http.set_header("Content-Encoding", "br".into()); }
 
             let ranges =
             if let Some(rangehs) = http.get_client().headers.get("range") {
@@ -660,7 +660,7 @@ impl SamicppHandler {
                 let range = ranges[0].clone();
                 http.set_status(206, "Partial Content".to_owned());
 
-                http.set_header("Content-Range", &format!("bytes {}-{}/{}", range.start, range.end, meta.len()));
+                http.set_header("Content-Range", format!("bytes {}-{}/{}", range.start, range.end, meta.len()));
                 
                 if range.start > range.end || range.start > meta.len() || range.end > meta.len() {
                     self.error(http, cinfo, conf, 416, path, file_path, "invalid range", "detail").await?;
@@ -668,7 +668,7 @@ impl SamicppHandler {
                 else {
                     let len = range.end - range.start;
                     file.seek(std::io::SeekFrom::Start(range.start)).await?;
-                    http.set_header("Content-Length", &len.to_string());
+                    http.set_header("Content-Length", len.to_string());
 
                     if len < self.settings.content.max_file_read_size as u64 {
                         let mut out = vec![0u8; len as usize];
@@ -701,7 +701,7 @@ impl SamicppHandler {
                 log_with_level!(false, self.settings.logging.file_processing_info, "client requested multiple ranges");
 
                 let boundary = "aGV5IGhvdyBhcmUgeW91";
-                http.set_header("Content-Type", &format!("multipart/byteranges; boundary={boundary}"));
+                http.set_header("Content-Type", format!("multipart/byteranges; boundary={boundary}"));
 
                 let mut errored = false;
                 for range in ranges {
@@ -760,7 +760,7 @@ impl SamicppHandler {
                 let mut chunk = vec![0u8; self.settings.content.file_chunk_size];
                 let count = meta.len() / self.settings.content.file_chunk_size as u64;
                 let remain = meta.len() % self.settings.content.file_chunk_size as u64;
-                http.set_header("Content-Length", &meta.len().to_string());
+                http.set_header("Content-Length", meta.len().to_string());
 
                 for _ in 0..count {
                     file.read_exact(&mut chunk).await?;
