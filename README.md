@@ -59,6 +59,7 @@ or fork the repo and open a pull request. <br/>
 - [ ] make some built in method of making services through data driven behaviour
 - [ ] allow sql and redis connectivity for local variables
 - [ ] make many helper methods for rhai embedding and simple middleware setup. such as `serve_file` `error` etc
+- [ ] implement complex caching algorithm
 
 ## Examples
 settings.toml
