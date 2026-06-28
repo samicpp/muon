@@ -45,6 +45,7 @@ or fork the repo and open a pull request. <br/>
 - [ ] allow reloading settings file
 - [ ] enable loading FFI modules
 - [ ] support forwarding the request by proxying
+- [ ] allow forwarding connection based on file/socket descriptors and ffi. example `extern "C" fn muon_receive_tcp(fd: *mut Fd) -> bool { /* ... */ }` in a running process 
 
 ## TODO::Features::SamicppHandler
 - [x] support serving files
