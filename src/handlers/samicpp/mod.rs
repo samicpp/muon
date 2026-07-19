@@ -1,8 +1,8 @@
-use std::{collections::HashMap, ops::Range, path::{Path, PathBuf}, ptr, sync::{Arc, RwLock}, time::SystemTime};
+use std::{collections::HashMap, ops::Range, path::{Path, PathBuf}, ptr, sync::{Arc, RwLock}, time::{Duration, SystemTime}};
 
 use dashmap::DashMap;
 use libloading::Library;
-use photon::{httprs_core::ffi::futures::FfiFuture, shared::{HttpSocket, LibError, LibResult}};
+use photon::{ffihttp::ffi::utils::heap_void_ptr, httprs_core::ffi::futures::FfiFuture, shared::{HttpSocket, LibError, LibResult}};
 use regex::Regex;
 use serde::Deserialize;
 use tokio::{fs::File, io::{AsyncReadExt, AsyncSeekExt}};
@@ -431,7 +431,7 @@ impl SamicppHandler {
     async fn dir_handler(&self, http: &mut DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> { 
         let name = file_path.file_name().map(|s| s.to_string_lossy()).unwrap_or("index".into());
 
-        if tokio::fs::try_exists(file_path.join("/.muon_dont_serve")).await? {
+        if tokio::fs::try_exists(file_path.join(".muon_dont_serve")).await? {
             self.error(http, cinfo, conf, 403, path, file_path, "cant serve dir", "serving has been disabled for current dir").await
         }
         else {
@@ -559,25 +559,41 @@ impl SamicppHandler {
         }
         else if name.ends_with(".ffi.so") || name.ends_with(".ffi.dll") || name.ends_with(".ffi.dylib") {
             log_with_level!(false, self.settings.logging.file_type_info, "file is ffi module");
-            let mut fut = FfiFuture::new(None, ptr::null_mut());
+
+            // let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            // let mut fut = FfiFuture::new(Some(oneshot_callback), heap_void_ptr(tx));
+            let mut fut = Box::new(FfiFuture::new(None, ptr::null_mut()));
 
             unsafe {
-                if let Some(lib) = self.ffi_modules.get(file_path) && lib.mtime >= meta.modified().unwrap_or(SystemTime::UNIX_EPOCH) {
+                if let Some(lib) = self.ffi_modules.get(file_path) && lib.mtime == meta.modified().unwrap_or(SystemTime::UNIX_EPOCH) {
+                    // #[cfg(debug_assertions)] println!("last modified {} vs lib mtime {}", meta.modified().unwrap_or(SystemTime::UNIX_EPOCH).elapsed().unwrap_or(Duration::from_nanos(0)).as_nanos(), lib.mtime.elapsed().unwrap_or(Duration::from_nanos(0)).as_nanos());
+                    // #[cfg(debug_assertions)] println!("lib mtime >= last modified {}", lib.mtime >= meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
+                    // #[cfg(debug_assertions)] println!("ffi module already loaded");
                     let handle = &(*lib).handle;
-                    handle((&mut fut) as *mut _, http as *mut _);
+                    // #[cfg(debug_assertions)] println!("function at {}", std::mem::transmute::<_, usize>(*handle));
+                    handle((&mut *fut) as *mut _, http as *mut _);
+                    // #[cfg(debug_assertions)] println!("function done");
                     let _ = drop(lib);
                 }
                 else {
+                    // #[cfg(debug_assertions)] println!("loading lib");
                     let lib = libloading::Library::new(file_path).map_err(|_| LibError::Io(std::io::Error::new(std::io::ErrorKind::Other, "couldnt open library")))?;
+                    // #[cfg(debug_assertions)] println!("looking for init and handle");
                     let init: libloading::Symbol<unsafe extern "C" fn() -> ()> = lib.get("init_muon_handler").map_err(|_| LibError::Io(std::io::Error::new(std::io::ErrorKind::Other, "couldnt find symbol init_muon_handler")))?;
                     let handle: libloading::Symbol<unsafe extern "C" fn(*mut FfiFuture, *mut DynHttpSocket) -> ()> = lib.get("muon_handler").map_err(|_| LibError::Io(std::io::Error::new(std::io::ErrorKind::Other, "couldnt find symbol init_muon_handler")))?;
                     let handle = *handle;
+                    // #[cfg(debug_assertions)] println!("found {} and {}", std::mem::transmute::<_, usize>(*init), std::mem::transmute::<_, usize>(handle));
                     init();
-                    handle((&mut fut) as *mut _, http as *mut _);
+                    handle((&mut *fut) as *mut _, http as *mut _);
+                    // #[cfg(debug_assertions)] println!("called init and handle");
                     self.ffi_modules.insert(file_path.to_owned(), FfiModule { lib, mtime: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), handle });
                 }
             }
+            // #[cfg(debug_assertions)] println!("awaiting");
+            // let _ = rx.await;
+            // #[cfg(debug_assertions)] println!("done awaiting oneshot");
             let _ = fut.await;
+            // #[cfg(debug_assertions)] println!("done awaiting future");
             log_with_level!(true, self.settings.logging.response, "{:?} 0 Done", file_path);
         }
         else if name.ends_with(".rhai") {
@@ -835,3 +851,9 @@ impl SamicppHandler {
         Ok(())
     }
 }
+
+// extern "C" fn oneshot_callback(tx: *mut std::ffi::c_void, _: *mut std::ffi::c_void) {
+//     let tx = 
+//     unsafe { Box::from_raw(tx as *mut tokio::sync::oneshot::Sender<()>) };
+//     let _ = tx.send(());
+// }

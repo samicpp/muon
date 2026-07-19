@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "asyncffi"
-version = "3.5.1"
+version = "3.5.3"
 dependencies = [
  "dashmap",
  "http",
@@ -475,7 +475,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "http"
-version = "2.4.4"
+version = "2.4.5"
 dependencies = [
  "base64",
  "dashmap",
@@ -486,7 +486,7 @@ dependencies = [
 
 [[package]]
 name = "httprs_core"
-version = "0.2.2"
+version = "0.2.6"
 dependencies = [
  "async-ffi",
  "tokio",
@@ -608,7 +608,7 @@ dependencies = [
 
 [[package]]
 name = "muon"
-version = "1.5.3"
+version = "1.5.4"
 dependencies = [
  "async-trait",
  "base64",
