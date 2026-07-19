@@ -43,9 +43,6 @@ or fork the repo and open a pull request. <br/>
 - [ ] allow exporting/sending server connection data
 - [ ] create runtime stdin console
 - [ ] allow reloading settings file
-- [ ] enable loading FFI modules
-- [ ] support forwarding the request by proxying
-- [ ] allow forwarding connection based on file/socket descriptors and ffi. example `extern "C" fn muon_receive_tcp(fd: *mut Fd) -> bool { /* ... */ }` in a running process 
 
 ## TODO::Features::SamicppHandler
 - [x] support serving files
@@ -54,12 +51,15 @@ or fork the repo and open a pull request. <br/>
 - [x] support download files
 - [x] support route level auth
 - [x] support FFI handler endpoints
+- [x] embed rhai ()
+- [ ] make some built in method of making services through data driven behaviour
+- [ ] allow chaining builtin services using rhai
 - [ ] embed Deno engine to execute javascript
 - [ ] allow stopping the servers / listeners
-- [ ] make some built in method of making services through data driven behaviour
 - [ ] allow sql and redis connectivity for local variables
 - [ ] implement complex caching algorithm
-- [ ] ~~embed rhai~~
+- [ ] support forwarding the request by proxying
+- [ ] allow forwarding connection based on file/socket descriptors and ffi. example `extern "C" fn muon_receive_tcp(fd: *mut Fd) -> bool { /* ... */ }` in a running process 
 - [ ] ~~make many helper methods for rhai embedding and simple middleware setup. such as `serve_file` `error` etc~~
 
 ## Examples

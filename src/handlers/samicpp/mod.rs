@@ -1,8 +1,8 @@
-use std::{collections::HashMap, ops::Range, path::{Path, PathBuf}, ptr, sync::{Arc, RwLock}, time::{Duration, SystemTime}};
+use std::{collections::HashMap, ops::Range, path::{Path, PathBuf}, ptr, sync::{Arc, RwLock}, time::SystemTime};
 
 use dashmap::DashMap;
 use libloading::Library;
-use photon::{ffihttp::ffi::utils::heap_void_ptr, httprs_core::ffi::futures::FfiFuture, shared::{HttpSocket, LibError, LibResult}};
+use photon::{httprs_core::ffi::futures::FfiFuture, shared::{HttpSocket, LibError, LibResult}};
 use regex::Regex;
 use serde::Deserialize;
 use tokio::{fs::File, io::{AsyncReadExt, AsyncSeekExt}};
@@ -560,40 +560,37 @@ impl SamicppHandler {
         else if name.ends_with(".ffi.so") || name.ends_with(".ffi.dll") || name.ends_with(".ffi.dylib") {
             log_with_level!(false, self.settings.logging.file_type_info, "file is ffi module");
 
-            // let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-            // let mut fut = FfiFuture::new(Some(oneshot_callback), heap_void_ptr(tx));
+            let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
             let mut fut = Box::new(FfiFuture::new(None, ptr::null_mut()));
 
             unsafe {
-                if let Some(lib) = self.ffi_modules.get(file_path) && lib.mtime == meta.modified().unwrap_or(SystemTime::UNIX_EPOCH) {
-                    // #[cfg(debug_assertions)] println!("last modified {} vs lib mtime {}", meta.modified().unwrap_or(SystemTime::UNIX_EPOCH).elapsed().unwrap_or(Duration::from_nanos(0)).as_nanos(), lib.mtime.elapsed().unwrap_or(Duration::from_nanos(0)).as_nanos());
-                    // #[cfg(debug_assertions)] println!("lib mtime >= last modified {}", lib.mtime >= meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
-                    // #[cfg(debug_assertions)] println!("ffi module already loaded");
-                    let handle = &(*lib).handle;
-                    // #[cfg(debug_assertions)] println!("function at {}", std::mem::transmute::<_, usize>(*handle));
+                if 
+                    let Some(handle) = self.ffi_modules
+                        .get(file_path)
+                        .and_then(|lib| 
+                            if lib.mtime == mtime { 
+                                Some(lib.handle) 
+                            } else { 
+                                None 
+                            })
+                {
                     handle((&mut *fut) as *mut _, http as *mut _);
-                    // #[cfg(debug_assertions)] println!("function done");
-                    let _ = drop(lib);
                 }
                 else {
-                    // #[cfg(debug_assertions)] println!("loading lib");
                     let lib = libloading::Library::new(file_path).map_err(|_| LibError::Io(std::io::Error::new(std::io::ErrorKind::Other, "couldnt open library")))?;
-                    // #[cfg(debug_assertions)] println!("looking for init and handle");
                     let init: libloading::Symbol<unsafe extern "C" fn() -> ()> = lib.get("init_muon_handler").map_err(|_| LibError::Io(std::io::Error::new(std::io::ErrorKind::Other, "couldnt find symbol init_muon_handler")))?;
                     let handle: libloading::Symbol<unsafe extern "C" fn(*mut FfiFuture, *mut DynHttpSocket) -> ()> = lib.get("muon_handler").map_err(|_| LibError::Io(std::io::Error::new(std::io::ErrorKind::Other, "couldnt find symbol init_muon_handler")))?;
+                    
+                    let init = *init;
                     let handle = *handle;
-                    // #[cfg(debug_assertions)] println!("found {} and {}", std::mem::transmute::<_, usize>(*init), std::mem::transmute::<_, usize>(handle));
+                    self.ffi_modules.insert(file_path.to_owned(), FfiModule { lib, mtime: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), handle });
+
                     init();
                     handle((&mut *fut) as *mut _, http as *mut _);
-                    // #[cfg(debug_assertions)] println!("called init and handle");
-                    self.ffi_modules.insert(file_path.to_owned(), FfiModule { lib, mtime: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), handle });
                 }
             }
-            // #[cfg(debug_assertions)] println!("awaiting");
-            // let _ = rx.await;
-            // #[cfg(debug_assertions)] println!("done awaiting oneshot");
+            
             let _ = fut.await;
-            // #[cfg(debug_assertions)] println!("done awaiting future");
             log_with_level!(true, self.settings.logging.response, "{:?} 0 Done", file_path);
         }
         else if name.ends_with(".rhai") {
