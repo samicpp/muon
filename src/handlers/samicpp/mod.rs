@@ -580,6 +580,58 @@ impl SamicppHandler {
             let _ = fut.await;
             log_with_level!(true, self.settings.logging.response, "{:?} 0 Done", file_path);
         }
+        else if name.ends_with(".rhai") {
+            #[cfg(feature = "rhai-scripting")]
+            {
+                use photon::httprs_core::ffi::own::RT;
+
+                let mut engine = rhai::Engine::new();
+                let mut scope = rhai::Scope::new();
+            
+                let mut content = String::new();
+                file.read_to_string(&mut content).await?;
+
+                let (tx, mut rx) = tokio::sync::mpsc::channel::<(i8, String, String)>(256);
+
+                let etx = tx.clone();
+                engine.register_fn("http_close", move |value: String| etx.blocking_send((0, value, "".into())));
+                let etx = tx.clone();
+                engine.register_fn("http_write", move |value: String| etx.blocking_send((1, value, "".into())));
+
+                let etx = tx.clone();
+                engine.register_fn("set_header", move |name: String, value: String| etx.blocking_send((2, name, value)));
+                let etx = tx.clone();
+                engine.register_fn("add_header", move |name: String, value: String| etx.blocking_send((3, name, value)));
+                let etx = tx.clone();
+                engine.register_fn("del_header", move |name: String| etx.blocking_send((4, name, "".into())));
+
+                let _jh = RT.get().unwrap().spawn_blocking(move || {
+                    let _ = engine.eval_with_scope::<String>(&mut scope, &content);
+                });
+                
+                while let Some((id, name, value)) = rx.recv().await {
+                    if id == 0 { http.close(&name.into_bytes()).await? }
+                    else if id == 1 { http.write(&name.into_bytes()).await? }
+                    else if id == 2 { http.set_header(&name, value); }
+                    else if id == 3 { http.add_header(&name, value); }
+                    else if id == 4 { http.del_header(&name); }
+                }
+                
+                // match engine.eval_with_scope::<String>(&mut scope, &content) {
+                //     Ok(res) => {
+                //         http.close(res.as_bytes()).await?;
+                //     },
+                //     Err(err) => {
+                //         let string = err.to_string();
+                //         self.error(http, cinfo, conf, 500, path, file_path, "rhai error", &string).await?;
+                //     }
+                // }
+            }
+            #[cfg(not(feature = "rhai-scripting"))]
+            {
+                self.error(http, cinfo, conf, 409, path, file_path, "rhai-scripting disabled", "feature rhai-scripting was disabled").await?;
+            }
+        }
         else {
             log_with_level!(false, self.settings.logging.file_type_info, "regular file");
             

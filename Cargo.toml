@@ -1,6 +1,6 @@
 [package]
 name = "muon"
-version = "1.5.2"
+version = "1.5.3"
 edition = "2024"
 
 [dependencies]
@@ -15,7 +15,7 @@ serde_json = "1.0.150"
 regex = "1.12.4"
 dashmap = { version = "6.2.1", features = ["serde"] }
 
-rustls = { version = "=0.23.40", default-features = false, features = [] }
+rustls = { version = "=0.23.41", default-features = false, features = [] }
 tokio-rustls = "=0.26.4"
 
 async-trait = "0.1.89"
@@ -25,6 +25,7 @@ psl = "2.1.214"
 base64 = "=0.22.1"
 
 libloading = "0.9.0"
+rhai = { version = "1.25.1", features = ["sync"], optional = true }
 
 [features]
 default = ["unix-sockets", "handler-simple", "handler-samicpp", "aws-lc-rs"]
@@ -35,3 +36,5 @@ aws-lc-rs = ["photon/aws-lc-rs", "rustls/aws-lc-rs"]
 
 handler-simple = []
 handler-samicpp = []
+
+rhai-scripting = ["dep:rhai"]

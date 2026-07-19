@@ -23,7 +23,7 @@ pub type DynHttpSocket = PolyHttpSocket<ReadHalf<DynStream>, WriteHalf<DynStream
 fn main() {
     let args = Cli::parse();
     let sname = args.settings_name.as_ref().map(|s| s.to_owned()).unwrap_or("settings.toml".to_owned());
-    let spfallback = "./".to_owned() + &sname;
+    let spfallback = "./".to_owned() + sname.as_str();
     let mut initial_logging = LogSettings::default();
     
     if let Some(lvl) = &args.loglevel {
