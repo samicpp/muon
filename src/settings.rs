@@ -164,6 +164,10 @@ pub struct LogSettings {
 
     pub file_type_info: Option<bool>,
     pub file_processing_info: Option<bool>,
+
+    pub prereq_found: Option<bool>,
+    pub prereq_failed: Option<bool>,
+    pub prereq_passed: Option<bool>,
 }
 impl LogSettings {
     pub const fn default() -> Self {
@@ -201,9 +205,13 @@ impl LogSettings {
             
             file_type_info: None,
             file_processing_info: None,
+
+            prereq_found: None,
+            prereq_failed: None,
+            prereq_passed: None,
         }
     }
-    pub fn _disable_all(&mut self) {
+    pub fn disable_all(&mut self) {
         *self = Self { 
             loglevel: self.loglevel,
             loglevel_template: self.loglevel_template.clone(),
@@ -238,9 +246,13 @@ impl LogSettings {
             
             file_type_info: Some(false),
             file_processing_info: Some(false),
+
+            prereq_found: Some(false),
+            prereq_failed: Some(false),
+            prereq_passed: Some(false),
         }
     }
-    pub fn _enable_all(&mut self) {
+    pub fn enable_all(&mut self) {
         *self = Self { 
             loglevel: self.loglevel,
             loglevel_template: self.loglevel_template.clone(),
@@ -275,6 +287,10 @@ impl LogSettings {
             
             file_type_info: Some(true),
             file_processing_info: Some(true),
+
+            prereq_found: Some(true),
+            prereq_failed: Some(true),
+            prereq_passed: Some(true),
         }
 
     }
@@ -316,6 +332,10 @@ impl LogSettings {
 
         self.file_type_info.swap_if_none(false);
         self.file_processing_info.swap_if_none(false);
+
+        self.prereq_found.swap_if_none(true);
+        self.prereq_failed.swap_if_none(true);
+        self.prereq_passed.swap_if_none(true);
     }
     pub fn enable_unset(&mut self) {
         self.init_error.swap_if_none(true);
@@ -345,6 +365,10 @@ impl LogSettings {
         
         self.file_type_info.swap_if_none(true);
         self.file_processing_info.swap_if_none(true);
+
+        self.prereq_found.swap_if_none(true);
+        self.prereq_failed.swap_if_none(true);
+        self.prereq_passed.swap_if_none(true);
     }
 
     pub fn update_loglevel(&mut self, level: i16, restv: bool) {
@@ -355,6 +379,8 @@ impl LogSettings {
             self.http2_frame_dump.swap_if_none(true);
             self.route_dump.swap_if_none(true);
             self.file_processing_info.swap_if_none(true);
+            self.prereq_found.swap_if_none(true);
+            self.prereq_passed.swap_if_none(true);
             rest = restv;
         }
         // verbose
@@ -388,6 +414,7 @@ impl LogSettings {
         if rest || level & 32 != 0 {
             self.routes_error.swap_if_none(true);
             self.http_error.swap_if_none(true);
+            self.prereq_failed.swap_if_none(true);
             rest = restv;
         }
         // critical error

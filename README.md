@@ -52,6 +52,7 @@ or fork the repo and open a pull request. <br/>
 - [x] support route level auth
 - [x] support FFI handler endpoints
 - [x] embed rhai ()
+- [x] support conditional checks before handling request
 - [ ] make some built in method of making services through data driven behaviour
 - [ ] allow chaining builtin services using rhai
 - [ ] embed Deno engine to execute javascript
@@ -101,4 +102,26 @@ serve_dir = "public"
 
 [logging]
 
+```
+config.json
+```json
+{
+    "default": {
+        "match-type": "default",
+        "dir": "."
+    },
+    "auth-test": {
+        "match-type": "path-start",
+        "dir": ".",
+        "auth": "hello:world"
+    },
+    "prereq-test": {
+        "match-type": "path-start",
+        "dir": ".",
+        "prerequisites": [
+            "no-body",
+            { "has-header": "x-custom-header" }
+        ]
+    }
+}
 ```

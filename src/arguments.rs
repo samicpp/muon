@@ -46,4 +46,10 @@ pub struct Cli {
 
     #[arg(long, help = "sets the filename of the routes, overrides settings")]
     pub routes: Option<String>,
+
+    #[arg(short = 'L', long, help = "enables all logging")]
+    pub loud: bool,
+
+    #[arg(short = 'S', long, help = "disables all logging")]
+    pub silent: bool,
 }

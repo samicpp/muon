@@ -480,6 +480,7 @@ dependencies = [
  "base64",
  "dashmap",
  "rand",
+ "serde",
  "sha1",
  "tokio",
 ]
@@ -608,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "muon"
-version = "1.5.5"
+version = "1.6.0"
 dependencies = [
  "async-trait",
  "base64",

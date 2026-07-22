@@ -2,13 +2,13 @@ use std::{collections::HashMap, ops::Range, path::{Path, PathBuf}, ptr, sync::{A
 
 use dashmap::DashMap;
 use libloading::Library;
-use photon::{httprs_core::ffi::futures::FfiFuture, shared::{HttpSocket, LibError, LibResult}};
+use photon::{httprs_core::ffi::futures::FfiFuture, shared::{HttpMethod, HttpSocket, HttpVersion, LibError, LibResult}};
 use regex::Regex;
 use serde::Deserialize;
 use tokio::{fs::File, io::{AsyncReadExt, AsyncSeekExt}};
 use base64::{Engine, engine::general_purpose::STANDARD as b64std};
 
-use crate::{AorB, DynHttpSocket, arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::log_client_simple, servers::GenAddr, settings::{OneOrMany, Settings, def_false}};
+use crate::{AorB, DynHttpSocket, arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::log_client_simple, servers::GenAddr, settings::{OneOrMany, Settings, def_false, def_true}};
 use owo_colors::OwoColorize;
 
 pub mod builtin;
@@ -28,7 +28,8 @@ pub struct RouteConfig {
     pub directory: String,
     pub router: Option<String>,
     pub auth: Option<String>,
-    pub middleware: Option<OneOrMany<String>>,
+    pub prerequisites: Option<OneOrMany<Prerequisite>>,
+    pub prereq_fail: Option<PrereqFail>,
 
     #[serde(default = "def_false")]
     pub allow_invalid_clients: bool,
@@ -37,6 +38,13 @@ pub struct RouteConfig {
     pub forbid_start: Option<OneOrMany<String>>,
     #[serde(skip)]
     pub forbid_regex: Option<Regex>,
+
+    #[serde(default = "def_true")]
+    pub ffi_modules: bool,
+    #[serde(default = "def_false")]
+    pub rhai_scripts: bool,
+    #[serde(default = "def_true")]
+    pub dyn_files: bool,
 
     pub e400_file: Option<String>,
     pub e403_file: Option<String>,
@@ -56,13 +64,18 @@ impl Default for RouteConfig {
             directory: ".".into(), 
             router: None, 
             auth: None, 
-            middleware: None, 
+            prerequisites: None, 
+            prereq_fail: None, 
 
             allow_invalid_clients: false,
             forbid: None, 
             forbid_end: None, 
             forbid_start: None, 
-            forbid_regex: None, 
+            forbid_regex: None,
+
+            ffi_modules: true,
+            rhai_scripts: false,
+            dyn_files: true,
 
             e400_file: None, 
             e403_file: None, 
@@ -88,6 +101,33 @@ pub enum MatchType {
     Protocol,
     Type,
     Domain,
+}
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub enum Prerequisite {
+    HasBody,
+    NoBody,
+
+    HasHeader(String),
+    NoHeader(String),
+    IsContentType(String, Option<String>),
+
+    BodyExactSize(usize),
+    BodyBiggerThan(usize),
+    BodySmallerThan(usize),
+
+    HasMethod(HttpMethod),
+    NoMethod(HttpMethod),
+
+    Version(HttpVersion),
+    NotVersion(HttpVersion),
+}
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub enum PrereqFail {
+    Error(u16, String),
+    Redirect(String, String),
+    File(u16, PathBuf),
 }
 pub struct FfiModule {
     #[allow(dead_code)]
@@ -157,15 +197,15 @@ impl HttpHandler for SamicppHandler {
     async fn entry(self: Arc<Self>, mut http: DynHttpSocket, cinfo: ClientInfo) -> Result<(), LibError> {
         log_with_level!(false, self.settings.logging.ip_dump, "{}", &cinfo.addr);
         http.read_until_head_complete().await?;
-        let client = http.get_client();
-        let path = sanitize_path(&client.path);
+        // let client = http.get_client();
+        let path = sanitize_path(&http.get_client().path);
         let path_str = path.as_os_str().to_string_lossy();
-        let host = client.host.as_deref().unwrap_or("about:blank");
+        let host = http.get_client().host.as_deref().unwrap_or("about:blank");
         let fullhost = format!("{}://{}{}", if cinfo.is_secure { "https" } else { "http" }, host, &path_str);
-        let pfullhost = format!("[{}]{}", client.version, &fullhost);
+        let pfullhost = format!("[{}]{}", http.get_client().version, &fullhost);
         let domain = domain_from_host(host);
 
-        log_with_level!(true, self.settings.logging.request, "\x1b[90m[{:?}]\x1b[0m {}", cinfo.addr, log_client_simple(client));
+        log_with_level!(true, self.settings.logging.request, "\x1b[90m[{:?}]\x1b[0m {}", cinfo.addr, log_client_simple(http.get_client()));
         
         match self.update_config().await {
             Err(AorB::A(err)) => elog_with_level!(true, self.settings.logging.routes_error, "routes I/O err {}", err.red()),
@@ -198,7 +238,7 @@ impl HttpHandler for SamicppHandler {
                         MatchType::Regex     => opt.regex.as_ref().map(|r: &Regex| r.is_match(&fullhost)).unwrap_or(false),
                         MatchType::PathStart => starts_with_case_insensitive(&path_str, label),
                         MatchType::Scheme    => cinfo.is_secure && label.eq_ignore_ascii_case("https") || !cinfo.is_secure && label.eq_ignore_ascii_case("http"),
-                        MatchType::Protocol  => client.version.to_string().eq_ignore_ascii_case(label),
+                        MatchType::Protocol  => http.get_client().version.to_string().eq_ignore_ascii_case(label),
                         MatchType::Type      => http.get_type().to_string().eq_ignore_ascii_case(label),
                         MatchType::Domain    => domain.eq_ignore_ascii_case(label),
                         // _                    => false,
@@ -221,30 +261,123 @@ impl HttpHandler for SamicppHandler {
         let route = route.unwrap_or(default);
         let fin_path = Path::new(&self.settings.content.serve_dir).join(&route.directory).join(&path);
 
-
-        if !client.valid && !route.allow_invalid_clients {
+        if !http.get_client().valid && !route.allow_invalid_clients {
             self.error(&mut http, &cinfo, &route, 400, &path, &path, "no invalid clients allowed", "detail").await?;
+
         }
 
         else if let Some(usrpass) = &route.auth && !authenticate(&mut http, &fullhost, usrpass.as_bytes()).await? {
 
         }
 
+
         else {
-            if let Some(router) = route.router.as_deref() { 
-                let router = Path::new(&self.settings.content.serve_dir).join(&route.directory).join(router);
-                if !router.exists() {
-                    self.error(&mut http, &cinfo, &route, 404, &path, &router, "router doesnt exist", "detail").await?;
+            let mut hasfailed = false;
+            if let Some(check) = route.prerequisites.as_ref().map(|p| p.get()) {
+                log_with_level!(false, &self.settings.logging.prereq_found, "found {} prereqs", check.len());
+                // http.read_until_complete().await?;
+                let clen = http.get_client().headers.get("content-length").and_then(|cl| cl[0].parse::<usize>().ok());
+                let hasbody = clen.map(|_| true).or(http.get_client().headers.get("transfer-encoding").map(|te| te[0].contains("chunked"))).unwrap_or(false);
+
+                for pre in check {
+
+                    let failed = 
+                    match pre {
+                        Prerequisite::HasBody if !hasbody => Some(("HasBody", "client has no body")),
+                        Prerequisite::NoBody if hasbody => Some(("NoBody", "client has a body")),
+
+                        Prerequisite::HasHeader(header) if !http.get_client().headers.contains_key(header) => Some(("HasHeader", "client doesnt have header")),
+                        Prerequisite::NoHeader(header) if http.get_client().headers.contains_key(header) => Some(("NoHeader", "client has header")),
+                        Prerequisite::IsContentType(top, sub) => {
+                            if 
+                                let Some(ct) = http.get_client().headers.get("content-type") && 
+                                let Some(mut ct) = ct[0].splitn(2, ';').next().map(|ct| ct.splitn(2, '/')) && 
+                                let Some(ctt) = ct.next() && 
+                                ctt == top
+                            {
+                                if let Some(sub) = sub && let Some(cts) = ct.next() && cts == sub {
+                                    None
+                                }
+                                else {
+                                    Some(("IsContentType", "client doesnt have valid content-type header"))
+                                }
+                            }
+                            else {
+                                Some(("IsContentType", "client doesnt have valid content-type header"))
+                            }
+                        },
+
+                        // Prerequisite::BodyExactSize(size) if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) != *size || http.read_until_complete().await?.body.len() != *size => Some(("BodyExactSize", "client body is not exact size")),
+                        // Prerequisite::BodyBiggerThan(size) if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) < *size || http.read_until_complete().await?.body.len() < *size => Some(("BodyBiggerThan", "client body is smaller than required")),
+                        // Prerequisite::BodySmallerThan(size) if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) > *size || http.read_until_complete().await?.body.len() > *size => Some(("BodyBiggerThan", "client body is bigger than required")),
+                        Prerequisite::BodyExactSize(size) if hasbody => {
+                            if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) != *size { Some(("BodyExactSize", "client body is not exact size")) }
+                            else if !http.get_client().headers.contains_key("content-length") && http.read_until_complete().await?.body.len() != *size { Some(("BodyExactSize", "client body is not exact size")) }
+                            else { None }
+                        }
+                        Prerequisite::BodyBiggerThan(size) if hasbody => {
+                            if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) < *size { Some(("BodyBiggerThan", "client body is smaller than required")) }
+                            else if !http.get_client().headers.contains_key("content-length") && http.read_until_complete().await?.body.len() < *size { Some(("BodyBiggerThan", "client body is smaller than required")) }
+                            else { None }
+                        }
+                        Prerequisite::BodySmallerThan(size) if hasbody => {
+                            if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) > *size { Some(("BodySmallerThan", "client body is bigger than required")) }
+                            else if !http.get_client().headers.contains_key("content-length") && http.read_until_complete().await?.body.len() > *size { Some(("BodySmallerThan", "client body is bigger than required")) }
+                            else { None }
+                        }
+
+                        Prerequisite::HasMethod(meth) if http.get_client().method != *meth => Some(("HasMethod", "client doesnt have method")),
+                        Prerequisite::NoMethod(meth) if http.get_client().method == *meth => Some(("NoMethod", "client does have method")),
+
+                        Prerequisite::Version(ver) if http.get_client().version != *ver => Some(("Version", "client isnt correct version")),
+                        Prerequisite::NotVersion(ver) if http.get_client().version == *ver => Some(("NoVersion", "client isnt correct version")),
+
+                        _ => None
+                        // _ => todo!("the rest")
+                    };
+                    let Some(failed) = failed else { continue };
+
+                    log_with_level!(true, &self.settings.logging.prereq_failed, "failed prereq {}, {}", failed.0, failed.1);
+
+                    match &route.prereq_fail {
+                        None => self.error(&mut http, &cinfo, &route, 403, &path, &path, "failed prereq", failed.1).await?,
+                        Some(PrereqFail::Error(code, msg)) => self.error(&mut http, &cinfo, &route, *code, &path, &path, &msg.replace("%TYPE%", failed.0).replace("%MSG%", failed.1), "").await?,
+                        Some(PrereqFail::Redirect(url, msg)) => {
+                            http.set_status(307, "Temporary Redirect".to_owned());
+                            http.set_header("Location", url.into());
+                            http.close(msg.replace("%TYPE%", failed.0).replace("%MSG%", failed.1).as_bytes()).await?;
+                        },
+                        Some(PrereqFail::File(code, path)) => {
+                            http.set_status(*code, "Foo".to_owned());
+                            self.file_handler(&mut http, &cinfo, &route, path, &fin_path, &fin_path).await?;
+                        }
+                    }
+
+                    hasfailed = true;
+                    break
                 }
-                else if !router.is_file() {
-                    self.error(&mut http, &cinfo, &route, 501, &path, &router, "router is not a file", "detail").await?;
+                
+                if !hasfailed {
+                    log_with_level!(false, &self.settings.logging.prereq_passed, "passed prereqs");
                 }
-                else {
-                    self.file_handler(&mut http, &cinfo, &route, &path, &router, &fin_path).await?;
-                }
-            } else {
-                self.dir_or_file(&mut http, &cinfo, &route, &path, &fin_path, &fin_path).await?;
-            };
+            }
+
+            if !hasfailed {
+                if let Some(router) = route.router.as_deref() { 
+                    let router = Path::new(&self.settings.content.serve_dir).join(&route.directory).join(router);
+                    if !router.exists() {
+                        self.error(&mut http, &cinfo, &route, 404, &path, &router, "router doesnt exist", "detail").await?;
+                    }
+                    else if !router.is_file() {
+                        self.error(&mut http, &cinfo, &route, 501, &path, &router, "router is not a file", "detail").await?;
+                    }
+                    else {
+                        self.file_handler(&mut http, &cinfo, &route, &path, &router, &fin_path).await?;
+                    }
+                } else {
+                    self.dir_or_file(&mut http, &cinfo, &route, &path, &fin_path, &fin_path).await?;
+                };
+            }
         }
 
         Ok(())
@@ -479,7 +612,7 @@ impl SamicppHandler {
             http.close(b"").await?;
             log_with_level!(true, self.settings.logging.response, "204 No Content");
         }
-        else if name.contains(".var.") || name.ends_with(".redirect") || name.ends_with(".link") {
+        else if conf.dyn_files && (name.contains(".var.") || name.ends_with(".redirect") || name.ends_with(".link")) {
             // TODO: constrain var files to the file size limits
             log_with_level!(false, self.settings.logging.file_type_info, "file is var, redirect, or link");
             http.set_header("Content-Type", mime.into());
@@ -557,7 +690,7 @@ impl SamicppHandler {
                 Box::pin(self.dir_or_file(http, cinfo, conf, path, link, real_path)).await?;
             }
         }
-        else if name.ends_with(".ffi.so") || name.ends_with(".ffi.dll") || name.ends_with(".ffi.dylib") {
+        else if conf.ffi_modules && (name.ends_with(".ffi.so") || name.ends_with(".ffi.dll") || name.ends_with(".ffi.dylib")) {
             log_with_level!(false, self.settings.logging.file_type_info, "file is ffi module");
 
             let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
@@ -589,11 +722,11 @@ impl SamicppHandler {
                     handle((&mut *fut) as *mut _, http as *mut _);
                 }
             }
-            
+
             let _ = fut.await;
             log_with_level!(true, self.settings.logging.response, "{:?} 0 Done", file_path);
         }
-        else if name.ends_with(".rhai") {
+        else if conf.rhai_scripts && name.ends_with(".script.rhai") {
             #[cfg(feature = "rhai-scripting")]
             {
                 use photon::httprs_core::ffi::own::RT;

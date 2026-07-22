@@ -33,6 +33,12 @@ fn main() {
         }
     }
 
+    if args.loud {
+        initial_logging.enable_all();
+    } else if args.silent {
+        initial_logging.disable_all();
+    }
+
 
     if 
     let Some(cwd) = &args.cwd && 
@@ -107,6 +113,10 @@ fn main() {
 
         file_type_info: initial_logging.file_type_info.or(settings.logging.file_type_info),
         file_processing_info: initial_logging.file_processing_info.or(settings.logging.file_processing_info),
+
+        prereq_found: initial_logging.prereq_found.or(settings.logging.prereq_found),
+        prereq_failed: initial_logging.prereq_failed.or(settings.logging.prereq_failed),
+        prereq_passed: initial_logging.prereq_passed.or(settings.logging.prereq_passed),
     };
 
     // if 
