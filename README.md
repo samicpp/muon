@@ -37,12 +37,13 @@ or fork the repo and open a pull request. <br/>
 - [x] support cli arguments
 - [x] support HTTP/2 and h2c
 - [x] rework logging
-- [ ] support HTTP/1.1 pipelining
-- [ ] advanced socket options with socket2
-- [ ] colorize log output
-- [ ] allow exporting/sending server connection data
-- [ ] create runtime stdin console
+- [x] colorize log output
+- [ ] create runtime console via stdin or socket
 - [ ] allow reloading settings file
+- [ ] allow stopping the servers / listeners
+- [ ] advanced socket options with socket2
+- [ ] support HTTP/1.1 pipelining
+- [ ] allow exporting/sending server connection data
 
 ## TODO::Features::SamicppHandler
 - [x] support serving files
@@ -56,12 +57,12 @@ or fork the repo and open a pull request. <br/>
 - [ ] colorize logging and add more logging
 - [ ] make some built in method of making services through data driven behaviour
 - [ ] allow chaining builtin services using rhai
-- [ ] embed Deno engine to execute javascript
-- [ ] allow stopping the servers / listeners
 - [ ] allow sql and redis connectivity for local variables
-- [ ] implement complex caching algorithm
+- [ ] store logging information about clients and more
 - [ ] support forwarding the request by proxying
 - [ ] allow forwarding connection based on file/socket descriptors and ffi. example `extern "C" fn muon_receive_tcp(fd: *mut Fd) -> bool { /* ... */ }` in a running process 
+- [ ] embed Deno engine to execute javascript
+- [ ] implement complex caching algorithm
 - [ ] ~~make many helper methods for rhai embedding and simple middleware setup. such as `serve_file` `error` etc~~
 
 ## Examples
