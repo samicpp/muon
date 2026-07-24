@@ -2,14 +2,14 @@ use std::{collections::HashMap, ops::Range, path::{Path, PathBuf}, ptr, sync::{A
 
 use dashmap::DashMap;
 use libloading::Library;
-use photon::{httprs_core::ffi::futures::FfiFuture, shared::{HttpMethod, HttpSocket, HttpVersion, LibError, LibResult}};
+use photon::{httprs_core::ffi::futures::FfiFuture, shared::{HttpClient, HttpMethod, HttpSocket, HttpVersion, LibError, LibResult}};
 use regex::Regex;
 use serde::Deserialize;
 use tokio::{fs::File, io::{AsyncReadExt, AsyncSeekExt}};
 use base64::{Engine, engine::general_purpose::STANDARD as b64std};
 
-use crate::{AorB, DynHttpSocket, arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, logger::log_client_simple, servers::GenAddr, settings::{OneOrMany, Settings, def_false, def_true}};
-use owo_colors::OwoColorize;
+use crate::{AorB, DynHttpSocket, arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, mime_types::MIME_TYPES, sanitize_path}, log_with_level, servers::GenAddr, settings::{OneOrMany, Settings, def_false, def_true}};
+// use owo_colors::OwoColorize;
 
 pub mod builtin;
 pub mod deno_scripting;
@@ -190,7 +190,39 @@ async fn authenticate(http: &mut DynHttpSocket, realm: &str, usrpass: &[u8]) -> 
     http.close(b"").await?;
     Ok(false)
 }
+fn log_client(client: &HttpClient, fullhost: &str) -> String {
+    use photon::shared::HttpMethod::*;
+    use photon::shared::HttpVersion::*;
 
+    format!(
+        "{} {} {}",
+        match &client.method {
+            photon::shared::HttpMethod::Unknown(Some(m)) => m,
+            photon::shared::HttpMethod::Unknown(None) => "UNKOWN",
+
+            Get => "\x1b[32mGET\x1b[0m",
+            Head => "\x1b[32mHEAD\x1b[0m",
+            Post => "\x1b[33mPOST\x1b[0m",
+            Put => "\x1b[33mPUT\x1b[0m",
+            Delete => "\x1b[31mDELETE\x1b[0m",
+            Connect => "\x1b[36mCONNECT\x1b[0m",
+            Options => "\x1b[35mOPTIONS\x1b[0m",
+            Trace => "\x1b[90mTRACE\x1b[0m",
+        },
+        match &client.version {
+            photon::shared::HttpVersion::Unknown(Some(v)) => v,
+            photon::shared::HttpVersion::Unknown(None) => "UNKNOWN/0.0",
+            Debug => "\x1b[90mDEBUG/0.0\x1b[0m",
+
+            Http09 => "\x1b[31mHTTP/0.9\x1b[0m",
+            Http10 => "\x1b[33mHTTP/1.0\x1b[0m",
+            Http11 => "\x1b[33mHTTP/1.1\x1b[0m",
+            Http2 => "\x1b[32mHTTP/2\x1b[0m",
+            Http3 => "\x1b[34mHTTP/3\x1b[0m",
+        },
+        fullhost,
+    )
+}
 
 #[async_trait::async_trait]
 impl HttpHandler for SamicppHandler {
@@ -201,15 +233,16 @@ impl HttpHandler for SamicppHandler {
         let path = sanitize_path(&http.get_client().path);
         let path_str = path.as_os_str().to_string_lossy();
         let host = http.get_client().host.as_deref().unwrap_or("about:blank");
-        let fullhost = format!("{}://{}{}", if cinfo.is_secure { "https" } else { "http" }, host, &path_str);
+        let fullhost = format!("{}://{}/{}", if cinfo.is_secure { "https" } else { "http" }, host, &path_str);
         let pfullhost = format!("[{}]{}", http.get_client().version, &fullhost);
         let domain = domain_from_host(host);
 
-        log_with_level!(true, self.settings.logging.request, "\x1b[90m[{:?}]\x1b[0m {}", cinfo.addr, log_client_simple(http.get_client()));
+        log_with_level!(true, self.settings.logging.request, "\x1b[90m[{:?}]\x1b[0m {}", cinfo.addr, log_client(http.get_client(), &fullhost));
+        // println!("{:?}", std::path::absolute(&self.routes_path).unwrap());
         
         match self.update_config().await {
-            Err(AorB::A(err)) => elog_with_level!(true, self.settings.logging.routes_error, "routes I/O err {}", err.red()),
-            Err(AorB::B(err)) => elog_with_level!(true, self.settings.logging.routes_error, "routes json err {}", err.red()),
+            Err(AorB::A(err)) => elog_with_level!(true, self.settings.logging.routes_error, "routes I/O err \x1b[91m{}\x1b[0m", err),
+            Err(AorB::B(err)) => elog_with_level!(true, self.settings.logging.routes_error, "routes json err \x1b[91m{}\x1b[0m", err),
             Ok(true) => log_with_level!(false, self.settings.logging.routes_update, "routes updated"),
             Ok(false) => {},
         }
@@ -236,7 +269,7 @@ impl HttpHandler for SamicppHandler {
                         MatchType::Start     => starts_with_case_insensitive(&fullhost, label),
                         MatchType::End       => ends_with_case_insensitive(&fullhost, label),
                         MatchType::Regex     => opt.regex.as_ref().map(|r: &Regex| r.is_match(&fullhost)).unwrap_or(false),
-                        MatchType::PathStart => starts_with_case_insensitive(&path_str, label),
+                        MatchType::PathStart => starts_with_case_insensitive(&path_str, &label[1..]),
                         MatchType::Scheme    => cinfo.is_secure && label.eq_ignore_ascii_case("https") || !cinfo.is_secure && label.eq_ignore_ascii_case("http"),
                         MatchType::Protocol  => http.get_client().version.to_string().eq_ignore_ascii_case(label),
                         MatchType::Type      => http.get_type().to_string().eq_ignore_ascii_case(label),
@@ -253,13 +286,14 @@ impl HttpHandler for SamicppHandler {
             }
             drop(routes);
 
-            if let Some(route) = &route {
-                self.routes_cache.insert(pfullhost, route.clone());
-            }
+            // if let Some(route) = &route {
+            //     self.routes_cache.insert(pfullhost, route.clone());
+            // }
         }
         
         let route = route.unwrap_or(default);
         let fin_path = Path::new(&self.settings.content.serve_dir).join(&route.directory).join(&path);
+        let fin_path = std::path::absolute(&fin_path).unwrap_or(fin_path);
 
         if !http.get_client().valid && !route.allow_invalid_clients {
             self.error(&mut http, &cinfo, &route, 400, &path, &path, "no invalid clients allowed", "detail").await?;
@@ -404,6 +438,7 @@ impl SamicppHandler {
             let modified = meta.modified().map_err(AorB::A)?;
             if *self.routes_modified.read().unwrap() < modified {
                 let file = tokio::fs::read(&self.routes_path).await.map_err(AorB::A)?;
+
                 
                 let map: HashMap<String, RouteConfig> = serde_json::de::from_slice(&file).map_err(AorB::B)?;
                 #[cfg(debug_assertions)] dbg!(&map);
@@ -512,7 +547,7 @@ impl SamicppHandler {
 
             500 => {
                 log_with_level!(true, self.settings.logging.http_error, "500 internal server error");
-                log_with_level!(true, self.settings.logging.http_error, "{}: {}", reason.red(), detail.red());
+                log_with_level!(true, self.settings.logging.http_error, "\x1b[91m{}\x1b[0m: \x1b[91m{}\x1b[0m", reason, detail);
                 http.set_status(code, "Internal Server Error".into());
 
                 if let Some(e500) = &conf.e500_file {

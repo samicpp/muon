@@ -137,6 +137,7 @@ pub struct LogSettings {
     pub disable_unset: bool,
 
 
+    pub init: Option<bool>,
     pub init_error: Option<bool>,
     pub exit: Option<bool>,
 
@@ -178,6 +179,7 @@ impl LogSettings {
             disable_unset: false,
 
 
+            init: None,
             init_error: None,
             exit: None,
 
@@ -219,6 +221,7 @@ impl LogSettings {
             disable_unset: self.disable_unset,
 
 
+            init: Some(false),
             init_error: Some(false),
             exit: Some(false),
 
@@ -260,6 +263,7 @@ impl LogSettings {
             disable_unset: self.disable_unset,
 
 
+            init: Some(true),
             init_error: Some(true),
             exit: Some(true),
 
@@ -305,6 +309,7 @@ impl LogSettings {
         }
     }
     pub fn disable_unset(&mut self) {
+        self.init.swap_if_none(false);
         self.init_error.swap_if_none(false);
         self.exit.swap_if_none(false);
 
@@ -338,6 +343,7 @@ impl LogSettings {
         self.prereq_passed.swap_if_none(true);
     }
     pub fn enable_unset(&mut self) {
+        self.init.swap_if_none(true);
         self.init_error.swap_if_none(true);
         self.exit.swap_if_none(true);
 
@@ -398,6 +404,7 @@ impl LogSettings {
         }
         // info
         if rest || level & 8 != 0 {
+            self.init.swap_if_none(true);
             self.exit.swap_if_none(true);
             self.request.swap_if_none(true);
             self.response.swap_if_none(true);

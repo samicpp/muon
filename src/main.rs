@@ -11,7 +11,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use clap::Parser;
 use photon::{extra::PolyHttpSocket, ffihttp::DynStream, httprs_core::ffi::own::RT};
 use tokio::io::{ReadHalf, WriteHalf};
-use owo_colors::OwoColorize;
+// use owo_colors::OwoColorize;
 
 use crate::{arguments::{Cli, Level}, servers::start_servers, settings::{LogSettings, Settings}};
 
@@ -44,7 +44,7 @@ fn main() {
     let Some(cwd) = &args.cwd && 
     let Err(err) = std::env::set_current_dir(&cwd) 
     {
-        elog_with_level!(true, initial_logging.init_error, "couldnt set cwd {}", err.red());
+        elog_with_level!(true, initial_logging.init_error, "couldnt set cwd \x1b[91m{}\x1b[0m", err);
     }
 
     #[cfg(feature = "aws-lc-rs")]
@@ -62,7 +62,7 @@ fn main() {
     else { std::env::current_exe().map(|p| p.parent().map(|p| p.join(sname)).unwrap_or(PathBuf::from(&spfallback))) } 
     {
         Err(e) => {
-            elog_with_level!(true, initial_logging.init_error, "couldnt get executable path {}", e.red());
+            elog_with_level!(true, initial_logging.init_error, "couldnt get executable path \x1b[91m{}\x1b[0m", e);
             Err(())
         },
         Ok(me) => match load_settings(&me.as_os_str().to_str().unwrap_or(&spfallback)) {
@@ -86,6 +86,7 @@ fn main() {
         disable_unset: settings.logging.disable_unset,
 
         
+        init: initial_logging.init.or(settings.logging.init),
         init_error: initial_logging.init_error.or(settings.logging.init_error),
         exit: initial_logging.exit.or(settings.logging.exit),
 
@@ -158,7 +159,7 @@ fn main() {
         match RT.get().unwrap().block_on(jh) {
             Ok(()) => (),
             Err(e) => {
-                elog_with_level!(true, settings2.logging.init_error, "couldnt wait for server to finish {}", e.red());
+                elog_with_level!(true, settings2.logging.init_error, "couldnt wait for server to finish \x1b[91m{}\x1b[0m", e);
             }
         }
     }
@@ -193,7 +194,7 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>) -> Option<tokio::task::JoinH
     let Some(cwd) = &settings.environment.cwd && 
     let Err(err) = std::env::set_current_dir(&cwd) 
     {
-        elog_with_level!(true, settings.logging.init_error, "couldnt set cwd {}", err.red());
+        elog_with_level!(true, settings.logging.init_error, "couldnt set cwd \x1b[91m{}\x1b[0m", err);
     }
 
     if settings.environment.multi_threaded {
@@ -216,7 +217,7 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>) -> Option<tokio::task::JoinH
                 Some(handle)
             },
             Err(err) => {
-                elog_with_level!(true, settings.logging.init_error, "failed to build runtime {}", err.red());
+                elog_with_level!(true, settings.logging.init_error, "failed to build runtime \x1b[91m{}\x1b[0m", err);
                 None
             }
         }
@@ -235,7 +236,7 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>) -> Option<tokio::task::JoinH
                 Some(handle)
             },
             Err(err) => {
-                elog_with_level!(true, settings.logging.init_error, "failed to build runtime {}", err.red());
+                elog_with_level!(true, settings.logging.init_error, "failed to build runtime \x1b[91m{}\x1b[0m", err);
                 None
             }
         }

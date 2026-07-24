@@ -6,8 +6,8 @@ use rustls::{pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject}, sign::C
 use tokio::net::UnixListener;
 use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::{TcpListener, TcpSocket, TcpStream}};
 use tokio_rustls::TlsAcceptor;
-use owo_colors::OwoColorize;
-use crate::{arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, debug::DebugHandler}, settings::Settings};
+// use owo_colors::OwoColorize;
+use crate::{arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, debug::DebugHandler}, log_with_level, settings::Settings};
 #[cfg(feature = "handler-simple")]
 use crate::handlers::simple::SimpleHandler;
 #[cfg(feature = "handler-samicpp")]
@@ -98,62 +98,87 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
         match prot {
             "tcp" | "http" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), true, true, None))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
+                    Ok(listener) => {
+                        log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, addr);
+                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), true, true, None)))
+                    },
                 }
             },
             "http1" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, None))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
+                    Ok(listener) => {
+                        log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, addr);
+                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, None)))
+                    },
                 }
             },
             "http1.1" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http11)))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
+                    Ok(listener) => {
+                        log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, addr);
+                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http11))))
+                    },
                 }
             },
             "http1.0" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http10)))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
+                    Ok(listener) => {
+                        log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, addr);
+                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http10))))
+                    },
                 }
             },
             "http0.9" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http09)))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
+                    Ok(listener) => {
+                        log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 52, 52, addr);
+                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http09))))
+                    },
                 }
             },
 
             "http2" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http2)))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
+                    Ok(listener) => {
+                        log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 143, 52, addr);
+                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http2))))
+                    },
                 }
             },
 
             "https" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_tls(settings.clone(), listener, tls_acceptor.clone(), handler.clone(), true, false, None))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
+                    Ok(listener) => {
+                        log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 76, 235, 52, addr);
+                        jhs.push(tokio::spawn(start_tls(settings.clone(), listener, tls_acceptor.clone(), handler.clone(), true, false, None)))
+                    },
                 }
             },
             "httpx" => {
                 match create_socket(loc, backlog) {
-                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
-                    Ok(listener) => jhs.push(tokio::spawn(start_dyn_tls(settings.clone(), listener, tls_acceptor.clone(), handler.clone(), true, true, None))),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
+                    Ok(listener) => {
+                        log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 52, 165, 235, addr);
+                        jhs.push(tokio::spawn(start_dyn_tls(settings.clone(), listener, tls_acceptor.clone(), handler.clone(), true, true, None)))
+                    },
                 }
             },
 
             #[cfg(feature = "unix-sockets")]
             "unix" => {
                 match UnixListener::bind(loc) {
-                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} {}", err.red()),
+                    Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         // servers.push(Server::TcpH2(server.clone()));
                         let handler = handler.clone();
+                        log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 119, 0, 255, addr);
                         jhs.push(tokio::spawn(serve(settings.clone(), listener, handler, true, true, None)));
                     }
                 }
@@ -177,7 +202,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
         let socket = match socket {
             Ok(socket) => socket,
             Err(err) => {
-                elog_with_level!(true, settings.logging.init_error, "couldnt create socket {}", err.red());
+                elog_with_level!(true, settings.logging.init_error, "couldnt create socket \x1b[91m{}\x1b[0m", err);
                 continue;
             }
         };
@@ -189,13 +214,13 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
         if let Some(opt) = binding.send_bufsize { let _ = socket.set_send_buffer_size(opt); }
 
         if let Err(err) = socket.bind(address) {
-            elog_with_level!(true, settings.logging.init_error, "couldnt bind {}", err.red());
+            elog_with_level!(true, settings.logging.init_error, "couldnt bind \x1b[91m{}\x1b[0m", err);
             continue;
         }
         let listener = match socket.listen(binding.backlog.unwrap_or(backlog)) {
             Ok(socket) => socket,
             Err(err) => {
-                elog_with_level!(true, settings.logging.init_error, "couldnt listen {}", err.red());
+                elog_with_level!(true, settings.logging.init_error, "couldnt listen \x1b[91m{}\x1b[0m", err);
                 continue;
             }
         };
@@ -711,6 +736,7 @@ pub async fn possible_h2c(settings: Arc<Settings>, handler: Arc<dyn HttpHandler>
         h2_loop(settings, handler, h2c, cinfo).await?;
     }
     else {
+        http1.set_header("Connection", "close".into());
         http1.version_override = verover;
         handler.entry(http1.into(), cinfo).await?;
     }

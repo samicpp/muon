@@ -53,6 +53,7 @@ or fork the repo and open a pull request. <br/>
 - [x] support FFI handler endpoints
 - [x] embed rhai ()
 - [x] support conditional checks before handling request
+- [ ] colorize logging and add more logging
 - [ ] make some built in method of making services through data driven behaviour
 - [ ] allow chaining builtin services using rhai
 - [ ] embed Deno engine to execute javascript
