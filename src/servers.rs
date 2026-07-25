@@ -55,6 +55,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
         let Ok(key) = PrivateKeyDer::from_pem_reader(key.as_slice()) &&
         let Ok(cert) = CertifiedKey::from_der(certs, key, &PROVIDER)
     {
+        log_with_level!(false, settings.logging.sni_setup, "set sni default cert");
         sni_builder.default = Some(Arc::new(cert));
     }
 
@@ -66,6 +67,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
             let Ok(key) = PrivateKeyDer::from_pem_reader(key.as_slice()) &&
             let Ok(cert) = CertifiedKey::from_der(certs, key, &PROVIDER)
         {
+            log_with_level!(false, settings.logging.sni_setup, "+ added {} in sni config", sni.domain);
             sni_builder.add_cert(sni.domain.clone(), cert);
         }
     }

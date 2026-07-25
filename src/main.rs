@@ -90,6 +90,8 @@ fn main() {
         init_error: initial_logging.init_error.or(settings.logging.init_error),
         exit: initial_logging.exit.or(settings.logging.exit),
 
+        sni_setup: initial_logging.sni_setup.or(settings.logging.sni_setup),
+
         ip_dump: initial_logging.ip_dump.or(settings.logging.ip_dump),
         client_dump: initial_logging.client_dump.or(settings.logging.client_dump),
 

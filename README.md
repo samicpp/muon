@@ -44,6 +44,7 @@ or fork the repo and open a pull request. <br/>
 - [ ] advanced socket options with socket2
 - [ ] support HTTP/1.1 pipelining
 - [ ] allow exporting/sending server connection data
+- [ ] temporarily support HTTP/3 through quinn
 
 ## TODO::Features::SamicppHandler
 - [x] support serving files

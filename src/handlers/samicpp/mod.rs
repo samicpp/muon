@@ -687,7 +687,8 @@ impl SamicppHandler {
                 },
             }
             content = content.replace("%FULL_IP%", &cinfo.addr.to_string());
-            content = content.replace("%PATH%", &path.to_string_lossy().replace('%', "%PERCENT%"));
+            content = content.replace("%CLEAN_PATH%", &path.to_string_lossy().replace('%', "%PERCENT%"));
+            content = content.replace("%PATH%", &http.get_client().path.replace('%', "%PERCENT%"));
             content = content.replace("%HOST%", &http.get_client().host.as_deref().unwrap_or("about:blank").replace('%', "%PERCENT%"));
             content = content.replace("%SCHEME%", if cinfo.is_secure { "https" } else { "http" });
             content = content.replace("%BASE_DIR%", &self.settings.content.serve_dir);

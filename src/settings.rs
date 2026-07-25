@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::Deserialize;
 
 
@@ -41,8 +43,8 @@ fn def_one_or_many<T>() -> OneOrMany<T> { OneOrMany::Many(vec![]) }
 #[derive(Debug, Deserialize, Default)]
 pub struct SniConfig {
     pub domain: String,
-    pub cert: String,
-    pub key: String,
+    pub cert: PathBuf,
+    pub key: PathBuf,
 }
 
 #[inline] pub const fn def_true() -> bool { true }
@@ -80,8 +82,8 @@ pub struct NetworkSettings {
     
     #[serde(default)]
     pub sni: Vec<SniConfig>,
-    pub default_key: Option<String>,
-    pub default_cert: Option<String>,
+    pub default_key: Option<PathBuf>,
+    pub default_cert: Option<PathBuf>,
     pub alpn: Option<OneOrMany<String>>,
 }
 
@@ -141,6 +143,8 @@ pub struct LogSettings {
     pub init_error: Option<bool>,
     pub exit: Option<bool>,
 
+    pub sni_setup: Option<bool>,
+
     pub client_dump: Option<bool>,
     pub ip_dump: Option<bool>,
 
@@ -183,6 +187,8 @@ impl LogSettings {
             init_error: None,
             exit: None,
 
+            sni_setup: None,
+
             client_dump: None,
             ip_dump: None,
 
@@ -224,6 +230,8 @@ impl LogSettings {
             init: Some(false),
             init_error: Some(false),
             exit: Some(false),
+            
+            sni_setup: Some(false),
 
             client_dump: Some(false),
             ip_dump: Some(false),
@@ -266,6 +274,8 @@ impl LogSettings {
             init: Some(true),
             init_error: Some(true),
             exit: Some(true),
+
+            sni_setup: Some(true),
 
             client_dump: Some(true),
             ip_dump: Some(true),
@@ -313,6 +323,8 @@ impl LogSettings {
         self.init_error.swap_if_none(false);
         self.exit.swap_if_none(false);
 
+        self.sni_setup.swap_if_none(false);
+
         self.client_dump.swap_if_none(false);
         self.ip_dump.swap_if_none(false);
 
@@ -346,6 +358,8 @@ impl LogSettings {
         self.init.swap_if_none(true);
         self.init_error.swap_if_none(true);
         self.exit.swap_if_none(true);
+
+        self.sni_setup.swap_if_none(false);
 
         self.client_dump.swap_if_none(true);
         self.ip_dump.swap_if_none(true);
@@ -387,6 +401,7 @@ impl LogSettings {
             self.file_processing_info.swap_if_none(true);
             self.prereq_found.swap_if_none(true);
             self.prereq_passed.swap_if_none(true);
+            self.sni_setup.swap_if_none(true);
             rest = restv;
         }
         // verbose
