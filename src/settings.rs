@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct Settings {
     pub network: NetworkSettings,
     pub environment: EnvironmentSettings,
@@ -12,7 +12,7 @@ pub struct Settings {
     // pub system: SystemSettings,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum OneOrMany<T> {
     One(T),
@@ -40,7 +40,7 @@ impl<T> OneOrMany<T> {
 
 fn def_one_or_many<T>() -> OneOrMany<T> { OneOrMany::Many(vec![]) }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct SniConfig {
     pub domain: String,
     pub cert: PathBuf,
@@ -49,7 +49,7 @@ pub struct SniConfig {
 
 #[inline] pub const fn def_true() -> bool { true }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct Binding {
     pub address: String,
     pub backlog: Option<u32>,
@@ -71,7 +71,7 @@ pub struct Binding {
     // pub alpn: Option<OneOrMany<String>>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct NetworkSettings {
     #[serde(default)]
     pub binding: Vec<Binding>,
@@ -89,9 +89,14 @@ pub struct NetworkSettings {
 
 
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct EnvironmentSettings {
     pub cwd: Option<String>,
+    
+
+    #[serde(default = "def_false")]
+    pub console: bool,
+    // pub console_address: Option<String>,
 
     #[serde(default = "def_true")]
     pub multi_threaded: bool,
@@ -109,7 +114,7 @@ pub struct EnvironmentSettings {
 #[inline] const fn def_max_file_read_size() -> usize { 128 * 1024 }
 #[inline] const fn def_file_chunk_size() -> usize { 128 * 1024 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct ContentSettings {
     pub handler: Option<String>,
 
@@ -129,7 +134,7 @@ pub struct ContentSettings {
 #[inline] pub const fn def_false() -> bool { false }
 
 // TODO: allow setting these with a loglevel
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct LogSettings {
     pub loglevel: Option<i16>,
     pub loglevel_template: Option<String>,
@@ -173,6 +178,9 @@ pub struct LogSettings {
     pub prereq_found: Option<bool>,
     pub prereq_failed: Option<bool>,
     pub prereq_passed: Option<bool>,
+
+    pub console_repeat: Option<bool>,
+    pub console_operation: Option<bool>,
 }
 impl LogSettings {
     pub const fn default() -> Self {
@@ -217,6 +225,9 @@ impl LogSettings {
             prereq_found: None,
             prereq_failed: None,
             prereq_passed: None,
+
+            console_repeat: None,
+            console_operation: None,
         }
     }
     pub fn disable_all(&mut self) {
@@ -261,6 +272,9 @@ impl LogSettings {
             prereq_found: Some(false),
             prereq_failed: Some(false),
             prereq_passed: Some(false),
+
+            console_repeat: Some(false),
+            console_operation: Some(false),
         }
     }
     pub fn enable_all(&mut self) {
@@ -305,6 +319,9 @@ impl LogSettings {
             prereq_found: Some(true),
             prereq_failed: Some(true),
             prereq_passed: Some(true),
+
+            console_repeat: Some(true),
+            console_operation: Some(true),
         }
 
     }
@@ -350,9 +367,12 @@ impl LogSettings {
         self.file_type_info.swap_if_none(false);
         self.file_processing_info.swap_if_none(false);
 
-        self.prereq_found.swap_if_none(true);
-        self.prereq_failed.swap_if_none(true);
-        self.prereq_passed.swap_if_none(true);
+        self.prereq_found.swap_if_none(false);
+        self.prereq_failed.swap_if_none(false);
+        self.prereq_passed.swap_if_none(false);
+
+        self.console_repeat.swap_if_none(false);
+        self.console_operation.swap_if_none(false);
     }
     pub fn enable_unset(&mut self) {
         self.init.swap_if_none(true);
@@ -389,6 +409,9 @@ impl LogSettings {
         self.prereq_found.swap_if_none(true);
         self.prereq_failed.swap_if_none(true);
         self.prereq_passed.swap_if_none(true);
+
+        self.console_repeat.swap_if_none(true);
+        self.console_operation.swap_if_none(true);
     }
 
     pub fn update_loglevel(&mut self, level: i16, restv: bool) {
@@ -402,6 +425,7 @@ impl LogSettings {
             self.prereq_found.swap_if_none(true);
             self.prereq_passed.swap_if_none(true);
             self.sni_setup.swap_if_none(true);
+            self.console_repeat.swap_if_none(true);
             rest = restv;
         }
         // verbose
@@ -410,6 +434,7 @@ impl LogSettings {
             self.routes_update.swap_if_none(true);
             self.file_type_info.swap_if_none(true);
             self.http_error_detailed.swap_if_none(true);
+            self.console_operation.swap_if_none(true);
             rest = restv;
         }
         // log

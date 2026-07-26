@@ -5,15 +5,16 @@ mod handlers;
 mod servers;
 // mod stream;
 mod logger;
+mod console;
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::{Arc, RwLock}, time::Duration};
 
 use clap::Parser;
 use photon::{extra::PolyHttpSocket, ffihttp::DynStream, httprs_core::ffi::own::RT};
 use tokio::io::{ReadHalf, WriteHalf};
 // use owo_colors::OwoColorize;
 
-use crate::{arguments::{Cli, Level}, servers::start_servers, settings::{LogSettings, Settings}};
+use crate::{arguments::{Cli, Level}, console::{ConTxRx, ConsoleCommand}, servers::start_servers, settings::{LogSettings, Settings}};
 
 // pub static PROVIDER: LazyLock<Arc<CryptoProvider>> = LazyLock::new(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
 // pub static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -56,6 +57,66 @@ fn main() {
 
 
 
+    let args = Arc::new(args);
+    let settings: Settings = setup_settings(&args, &initial_logging, sname, spfallback);
+    let sett_rwl = Arc::new(RwLock::new(settings.clone()));
+    let (tx, rx) = tokio::sync::broadcast::channel::<ConsoleCommand>(4);
+    let mut txrx = ConTxRx(tx,rx);
+
+    let _cjh = 
+    if settings.environment.console {
+        let args = args.clone();
+        let txrx = txrx.clone();
+
+        Some(std::thread::spawn(move || {
+            let _ = console::console(args, sett_rwl.clone(), txrx);
+        }))
+    }
+    else { None };
+
+    let settings = Arc::new(settings);
+    let settings2 = settings.clone();
+    
+    if let Some(mut jh) = process(args, settings2, txrx.clone()) { 
+        let settings = settings.clone();
+        RT.get().unwrap().block_on(async move {
+            loop {
+                tokio::select! {
+                    res = &mut jh => {
+                        let _ = res.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
+                        break;
+                    },
+                    cmd = txrx.1.recv() => {
+                        match cmd {
+                            Ok(ConsoleCommand::Kill) => {
+                                jh.abort();
+                                break;
+                            },
+                            Ok(ConsoleCommand::Shutdown) => {
+                                let _ = jh.await.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
+                                break;
+                            },
+                            Ok(ConsoleCommand::Restart) => {
+                                let _ = jh.await.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
+                                break;
+                            },
+                            Err(_) => {
+                                // elog_with_level!(true, settings.logging.init_error, "command crashed", e)
+                            },
+                        }
+                    }
+                }
+            }
+        })
+    }
+    // if let Some(cjh) = cjh {
+    //     let _ = cjh.join();
+    // }
+
+    elog_with_level!(true, settings.logging.exit, "done, exiting")
+}
+
+fn setup_settings(args: &Cli, initial_logging: &LogSettings, sname: String, spfallback: String) -> Settings {
     let settings = 
     match 
     if let Some(spath) = &args.settings { Ok(PathBuf::from(spath)) } 
@@ -120,53 +181,12 @@ fn main() {
         prereq_found: initial_logging.prereq_found.or(settings.logging.prereq_found),
         prereq_failed: initial_logging.prereq_failed.or(settings.logging.prereq_failed),
         prereq_passed: initial_logging.prereq_passed.or(settings.logging.prereq_passed),
+
+        console_repeat: initial_logging.console_repeat.or(settings.logging.console_repeat),
+        console_operation: initial_logging.console_operation.or(settings.logging.console_operation),
     };
 
-    // if 
-        // args.loglevel.is_none() && 
-        // let Some(mut lvl) = settings.logging.loglevel.or(settings.logging.loglevel_template.as_deref().map(
-        //     |preset| match preset {
-        //         "all" | "everything" | "*" => u64::MAX,
-        //         "nececities" | "needed" | "-" => loglevels::INIT_ERROR | loglevels::REQUEST,
-        //         "verbose" | "+" => loglevels::INIT_ERROR | loglevels::REQUEST | loglevels::EXIT | loglevels::RESPONSE | loglevels::CONTENT_HANDLER_ERROR | loglevels::ROUTES_ERROR,
-        //         _ => get_loglevel(),
-        //     }
-        // )) {
-        
-        // match settings.logging.init_error { Some(true) => lvl |= loglevels::INIT_ERROR, Some(false) => lvl &= !loglevels::INIT_ERROR, None => {} }
-        // match settings.logging.exit { Some(true) => lvl |= loglevels::EXIT, Some(false) => lvl &= !loglevels::EXIT, None => {} }
-        // match settings.logging.client_dump { Some(true) => lvl |= loglevels::CLIENT_DUMP, Some(false) => lvl &= !loglevels::CLIENT_DUMP, None => {} }
-        // match settings.logging.request { Some(true) => lvl |= loglevels::REQUEST, Some(false) => lvl &= !loglevels::REQUEST, None => {} }
-        // match settings.logging.response { Some(true) => lvl |= loglevels::RESPONSE, Some(false) => lvl &= !loglevels::RESPONSE, None => {} }
-        // match settings.logging.response_time { Some(true) => lvl |= loglevels::RESPONSE_TIME, Some(false) => lvl &= !loglevels::RESPONSE_TIME, None => {} }
-        // match settings.logging.handler_error { Some(true) => lvl |= loglevels::HANDLER_ERROR, Some(false) => lvl &= !loglevels::HANDLER_ERROR, None => {} }
-        // match settings.logging.tls_upgrade_error { Some(true) => lvl |= loglevels::TLS_UPGRADE_ERROR, Some(false) => lvl &= !loglevels::TLS_UPGRADE_ERROR, None => {} }
-        // match settings.logging.content_handler_error { Some(true) => lvl |= loglevels::CONTENT_HANDLER_ERROR, Some(false) => lvl &= !loglevels::CONTENT_HANDLER_ERROR, None => {} }
-        // match settings.logging.http2_error { Some(true) => lvl |= loglevels::HTTP2_ERROR, Some(false) => lvl &= !loglevels::HTTP2_ERROR, None => {} }
-        // match settings.logging.http2_frame_dump { Some(true) => lvl |= loglevels::HTTP2_FRAME_DUMP, Some(false) => lvl &= !loglevels::HTTP2_FRAME_DUMP, None => {} }
-        // match settings.logging.routes_error { Some(true) => lvl |= loglevels::ROUTES_ERROR, Some(false) => lvl &= !loglevels::ROUTES_ERROR, None => {} }
-        // match settings.logging.routes_update { Some(true) => lvl |= loglevels::ROUTES_UPDATE, Some(false) => lvl &= !loglevels::ROUTES_UPDATE, None => {} }
-        // match settings.logging.route_dump { Some(true) => lvl |= loglevels::ROUTE_DUMP, Some(false) => lvl &= !loglevels::ROUTE_DUMP, None => {} }
-
-        // set_loglevel(lvl);
-    // }
-
-
-
-    let args = Arc::new(args);
-    let settings = Arc::new(settings);
-    let settings2 = settings.clone();
-    
-    if let Some(jh) = process(args, settings) { 
-        match RT.get().unwrap().block_on(jh) {
-            Ok(()) => (),
-            Err(e) => {
-                elog_with_level!(true, settings2.logging.init_error, "couldnt wait for server to finish \x1b[91m{}\x1b[0m", e);
-            }
-        }
-    }
-
-    elog_with_level!(true, settings2.logging.exit, "done, exiting")
+    settings
 }
 
 fn load_settings(path: &str) -> Result<Settings, AorB<std::io::Error, toml::de::Error>> {
@@ -188,7 +208,7 @@ impl<A: std::fmt::Debug, B: std::fmt::Debug> std::fmt::Debug for AorB<A, B> {
     }
 }
 
-fn process(args: Arc<Cli>, settings: Arc<Settings>) -> Option<tokio::task::JoinHandle<()>> {
+fn process(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxRx) -> Option<tokio::task::JoinHandle<()>> {
     #[cfg(debug_assertions)] dbg!(&args);
     #[cfg(debug_assertions)] dbg!(&settings);
 
@@ -215,7 +235,7 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>) -> Option<tokio::task::JoinH
         match rt.build() {
             Ok(rt) => {
                 RT.set(rt).unwrap();
-                let handle = RT.get().unwrap().spawn(start_servers(args, settings));
+                let handle = RT.get().unwrap().spawn(start_servers(args, settings, txrx));
                 Some(handle)
             },
             Err(err) => {
@@ -234,7 +254,7 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>) -> Option<tokio::task::JoinH
         match rt.build() {
             Ok(rt) => {
                 RT.set(rt).unwrap();
-                let handle = RT.get().unwrap().spawn(start_servers(args, settings));
+                let handle = RT.get().unwrap().spawn(start_servers(args, settings, txrx));
                 Some(handle)
             },
             Err(err) => {

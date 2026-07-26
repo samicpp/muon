@@ -38,9 +38,11 @@ or fork the repo and open a pull request. <br/>
 - [x] support HTTP/2 and h2c
 - [x] rework logging
 - [x] colorize log output
-- [ ] create runtime console via stdin or socket
+- [x] create runtime console
+- [x] allow stopping the servers / listeners
+- [ ] allow setting console to listen over tcp
+- [ ] allow console to use rhai for scripting
 - [ ] allow reloading settings file
-- [ ] allow stopping the servers / listeners
 - [ ] advanced socket options with socket2
 - [ ] support HTTP/1.1 pipelining
 - [ ] allow exporting/sending server connection data

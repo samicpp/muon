@@ -7,7 +7,7 @@ use tokio::net::UnixListener;
 use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::{TcpListener, TcpSocket, TcpStream}};
 use tokio_rustls::TlsAcceptor;
 // use owo_colors::OwoColorize;
-use crate::{arguments::Cli, elog_with_level, handlers::{ClientInfo, HttpHandler, debug::DebugHandler}, log_with_level, settings::Settings};
+use crate::{arguments::Cli, console::{ConTxRx, ConsoleCommand}, elog_with_level, handlers::{ClientInfo, HttpHandler, debug::DebugHandler}, log_with_level, settings::Settings};
 #[cfg(feature = "handler-simple")]
 use crate::handlers::simple::SimpleHandler;
 #[cfg(feature = "handler-samicpp")]
@@ -25,7 +25,7 @@ pub const H2SETTINGS: Http2Settings = Http2Settings {
 };
 
 
-pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
+pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxRx) {
     let addresses = args.address.as_ref().map(|v| v.as_slice()).unwrap_or(&[]).iter().chain(settings.network.address.get().iter()).collect::<Vec<&String>>();
 
     let handler = settings.content.handler.as_deref().or(args.handler.as_deref()).unwrap_or(DEFAULT_HANDLER);
@@ -103,7 +103,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, addr);
-                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), true, true, None)))
+                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), true, true, None, txrx.clone())))
                     },
                 }
             },
@@ -112,7 +112,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, addr);
-                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, None)))
+                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, None, txrx.clone())))
                     },
                 }
             },
@@ -121,7 +121,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, addr);
-                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http11))))
+                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http11), txrx.clone())))
                     },
                 }
             },
@@ -130,7 +130,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, addr);
-                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http10))))
+                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http10), txrx.clone())))
                     },
                 }
             },
@@ -139,7 +139,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 52, 52, addr);
-                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http09))))
+                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http09), txrx.clone())))
                     },
                 }
             },
@@ -149,7 +149,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 143, 52, addr);
-                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http2))))
+                        jhs.push(tokio::spawn(start_tcp(settings.clone(), listener, handler.clone(), false, false, Some(HttpVersion::Http2), txrx.clone())))
                     },
                 }
             },
@@ -159,7 +159,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 76, 235, 52, addr);
-                        jhs.push(tokio::spawn(start_tls(settings.clone(), listener, tls_acceptor.clone(), handler.clone(), true, false, None)))
+                        jhs.push(tokio::spawn(start_tls(settings.clone(), listener, tls_acceptor.clone(), handler.clone(), true, false, None, txrx.clone())))
                     },
                 }
             },
@@ -168,7 +168,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 52, 165, 235, addr);
-                        jhs.push(tokio::spawn(start_dyn_tls(settings.clone(), listener, tls_acceptor.clone(), handler.clone(), true, true, None)))
+                        jhs.push(tokio::spawn(start_dyn_tls(settings.clone(), listener, tls_acceptor.clone(), handler.clone(), true, true, None, txrx.clone())))
                     },
                 }
             },
@@ -181,7 +181,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
                         // servers.push(Server::TcpH2(server.clone()));
                         let handler = handler.clone();
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 119, 0, 255, addr);
-                        jhs.push(tokio::spawn(serve(settings.clone(), listener, handler, true, true, None)));
+                        jhs.push(tokio::spawn(serve(settings.clone(), listener, handler, true, true, None, txrx.clone())));
                     }
                 }
             }
@@ -296,12 +296,12 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>) {
         let settings = settings.clone();
         match dyn_tls {
             Some(true) => {
-                jhs.push(tokio::spawn(start_dyn_tls(settings, listener, acceptor, handler, allow_h2c, allow_prior_knowledge, assume)));
+                jhs.push(tokio::spawn(start_dyn_tls(settings, listener, acceptor, handler, allow_h2c, allow_prior_knowledge, assume, txrx.clone())));
             },
             Some(false) => {
-                jhs.push(tokio::spawn(start_tls(settings, listener, acceptor, handler, allow_h2c, allow_prior_knowledge, assume)));
+                jhs.push(tokio::spawn(start_tls(settings, listener, acceptor, handler, allow_h2c, allow_prior_knowledge, assume, txrx.clone())));
             },
-            None => jhs.push(tokio::spawn(start_tcp(settings, listener, handler, allow_h2c, allow_prior_knowledge, assume))),
+            None => jhs.push(tokio::spawn(start_tcp(settings, listener, handler, allow_h2c, allow_prior_knowledge, assume, txrx.clone()))),
         }
     }
 
@@ -423,25 +423,47 @@ pub async fn start_tcp(
     allow_prior_knowledge: bool, 
     /*peek: bool,*/ 
     assume: Option<HttpVersion>,
+    mut txrx: ConTxRx,
 ) -> () {
     loop {
-        let Ok((stream, addr)) = listener.accept().await else { continue; };
-        let handler = handler.clone();
-        let settings = settings.clone();
-        let settings2 = settings.clone();
+        tokio::select! {
+            lisres = listener.accept() => {
+                match lisres {
+                    Ok((stream, addr)) => {
+                        let handler = handler.clone();
+                        let settings = settings.clone();
+                        let settings2 = settings.clone();
 
-        let assume = assume.clone();
-        tokio::spawn(async move {
-            let now = Instant::now();
-            match handle(settings2, handler, stream.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
-                Ok(()) => (),
-                Err(err) => elog_with_level!(true, settings.logging.handler_error, "{err}"),
+                        let assume = assume.clone();
+                        tokio::spawn(async move {
+                            let now = Instant::now();
+                            match handle(settings2, handler, stream.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
+                                Ok(()) => (),
+                                Err(err) => elog_with_level!(true, settings.logging.handler_error, "{err}"),
+                            }
+                            if settings.logging.response_time.unwrap_or(false) {
+                                let stamp = timestamp(now.elapsed());
+                                println!("connection took {}", &stamp);
+                            }
+                        });
+                    },
+                    Err(_) => { },
+                }
             }
-            if settings.logging.response_time.unwrap_or(false) {
-                let stamp = timestamp(now.elapsed());
-                println!("connection took {}", &stamp);
+
+            command = txrx.1.recv() => {
+                match command {
+                    Ok(cmd) => {
+                        match cmd {
+                            ConsoleCommand::Shutdown => break,
+                            ConsoleCommand::Restart => break,
+                            ConsoleCommand::Kill => break,
+                        }
+                    },
+                    Err(_) => { },
+                }
             }
-        });
+        }
     }
 }
 pub async fn start_tls(
@@ -454,31 +476,53 @@ pub async fn start_tls(
     allow_prior_knowledge: bool, 
     /*peek: bool,*/ 
     assume: Option<HttpVersion>,
+    mut txrx: ConTxRx,
 ) -> () {
     loop {
-        let Ok((stream, addr)) = listener.accept().await else { continue; };
-        let handler = handler.clone();
-        let settings = settings.clone();
-        let settings2 = settings.clone();
+        tokio::select! {
+            lisres = listener.accept() => {
+                match lisres {
+                    Ok((stream, addr)) => {
+                        let handler = handler.clone();
+                        let settings = settings.clone();
+                        let settings2 = settings.clone();
 
-        let assume = assume.clone();
-        let acceptor = acceptor.clone();
-        tokio::spawn(async move {
-            let now = Instant::now();
-            match acceptor.accept(stream).await {
-                Ok(tls) => match handle(settings2, handler, tls.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
-                    Ok(()) => (),
-                    Err(err) => elog_with_level!(true, settings.logging.handler_error, "{err}"),
-                },
-                Err(err) => {
-                    elog_with_level!(true, settings.logging.tls_upgrade_error, "{err}")
+                        let assume = assume.clone();
+                        let acceptor = acceptor.clone();
+                        tokio::spawn(async move {
+                            let now = Instant::now();
+                            match acceptor.accept(stream).await {
+                                Ok(tls) => match handle(settings2, handler, tls.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
+                                    Ok(()) => (),
+                                    Err(err) => elog_with_level!(true, settings.logging.handler_error, "{err}"),
+                                },
+                                Err(err) => {
+                                    elog_with_level!(true, settings.logging.tls_upgrade_error, "{err}")
+                                }
+                            }
+                            if settings.logging.response_time.unwrap_or(false) {
+                                let stamp = timestamp(now.elapsed());
+                                println!("connection took {}", &stamp);
+                            }
+                        });
+                    },
+                    Err(_) => { },
                 }
             }
-            if settings.logging.response_time.unwrap_or(false) {
-                let stamp = timestamp(now.elapsed());
-                println!("connection took {}", &stamp);
+
+            command = txrx.1.recv() => {
+                match command {
+                    Ok(cmd) => {
+                        match cmd {
+                            ConsoleCommand::Shutdown => break,
+                            ConsoleCommand::Restart => break,
+                            ConsoleCommand::Kill => break,
+                        }
+                    },
+                    Err(_) => { },
+                }
             }
-        });
+        }
     }
 }
 pub async fn start_dyn_tls(
@@ -491,31 +535,53 @@ pub async fn start_dyn_tls(
     allow_prior_knowledge: bool, 
     /*peek: bool,*/ 
     assume: Option<HttpVersion>,
+    mut txrx: ConTxRx,
 ) -> () {
     loop {
-        let Ok((tcp, addr)) = listener.accept().await else { continue; };
-        let handler = handler.clone();
-        let settings = settings.clone();
-        let settings2 = settings.clone();
+        tokio::select! {
+            lisres = listener.accept() => {
+                match lisres {
+                    Ok((tcp, addr)) => {
+                        let handler = handler.clone();
+                        let settings = settings.clone();
+                        let settings2 = settings.clone();
 
-        let assume = assume.clone();
-        let acceptor = acceptor.clone();
-        tokio::spawn(async move {
-            let now = Instant::now();
-            match dyn_upgrade(tcp, acceptor).await {
-                Ok(stream) => match handle(settings2, handler, stream, addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
-                    Ok(()) => (),
-                    Err(err) => elog_with_level!(true, settings.logging.handler_error, "{err}"),
-                },
-                Err(err) => {
-                    elog_with_level!(true, settings.logging.tls_upgrade_error, "{err}")
-                },
+                        let assume = assume.clone();
+                        let acceptor = acceptor.clone();
+                        tokio::spawn(async move {
+                            let now = Instant::now();
+                            match dyn_upgrade(tcp, acceptor).await {
+                                Ok(stream) => match handle(settings2, handler, stream, addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
+                                    Ok(()) => (),
+                                    Err(err) => elog_with_level!(true, settings.logging.handler_error, "{err}"),
+                                },
+                                Err(err) => {
+                                    elog_with_level!(true, settings.logging.tls_upgrade_error, "{err}")
+                                },
+                            }
+                            if settings.logging.response_time.unwrap_or(false) {
+                                let stamp = timestamp(now.elapsed());
+                                println!("connection took {}", &stamp);
+                            }
+                        });
+                    },
+                    Err(_) => { },
+                }
             }
-            if settings.logging.response_time.unwrap_or(false) {
-                let stamp = timestamp(now.elapsed());
-                println!("connection took {}", &stamp);
+
+            command = txrx.1.recv() => {
+                match command {
+                    Ok(cmd) => {
+                        match cmd {
+                            ConsoleCommand::Shutdown => break,
+                            ConsoleCommand::Restart => break,
+                            ConsoleCommand::Kill => break,
+                        }
+                    },
+                    Err(_) => { },
+                }
             }
-        });
+        }
     }
 }
 pub async fn dyn_upgrade(tcp: TcpStream, acceptor: Arc<TlsAcceptor>) -> Result<DynStream, std::io::Error> {
@@ -531,26 +597,47 @@ pub async fn dyn_upgrade(tcp: TcpStream, acceptor: Arc<TlsAcceptor>) -> Result<D
     }
 
 }
-pub async fn serve<L: Listener>(settings: Arc<Settings>, listener: L, handler: Arc<dyn HttpHandler>, allow_h2c: bool, allow_prior_knowledge: bool, /*peek: bool,*/ assume: Option<HttpVersion>) {
+pub async fn serve<L: Listener>(settings: Arc<Settings>, listener: L, handler: Arc<dyn HttpHandler>, allow_h2c: bool, allow_prior_knowledge: bool, /*peek: bool,*/ assume: Option<HttpVersion>, mut txrx: ConTxRx) {
     loop {
-        let Ok((stream, addr)) = listener.accept().await else { continue; };
-        let handler = handler.clone();
-        let settings = settings.clone();
-        let settings2 = settings.clone();
+        tokio::select! {
+            lisres = listener.accept() => {
+                match lisres {
+                    Ok((stream, addr)) => {
+                        let handler = handler.clone();
+                        let settings = settings.clone();
+                        let settings2 = settings.clone();
 
 
-        let assume = assume.clone();
-        tokio::spawn(async move {
-            let now = Instant::now();
-            match handle(settings2, handler, stream.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
-                Ok(()) => (),
-                Err(err) => elog_with_level!(true, settings.logging.handler_error, "{err}"),
+                        let assume = assume.clone();
+                        tokio::spawn(async move {
+                            let now = Instant::now();
+                            match handle(settings2, handler, stream.into(), addr.into(), allow_h2c, allow_prior_knowledge, /*peek,*/ assume).await {
+                                Ok(()) => (),
+                                Err(err) => elog_with_level!(true, settings.logging.handler_error, "{err}"),
+                            }
+                            if settings.logging.response_time.unwrap_or(false) {
+                                let stamp = timestamp(now.elapsed());
+                                println!("connection took {}", &stamp);
+                            }
+                        });
+                    },
+                    Err(_) => { },
+                }
             }
-            if settings.logging.response_time.unwrap_or(false) {
-                let stamp = timestamp(now.elapsed());
-                println!("connection took {}", &stamp);
+
+            command = txrx.1.recv() => {
+                match command {
+                    Ok(cmd) => {
+                        match cmd {
+                            ConsoleCommand::Shutdown => break,
+                            ConsoleCommand::Restart => break,
+                            ConsoleCommand::Kill => break,
+                        }
+                    },
+                    Err(_) => { },
+                }
             }
-        });
+        }
     }
 }
 
