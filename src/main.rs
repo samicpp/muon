@@ -63,23 +63,23 @@ fn main() {
     let (tx, rx) = tokio::sync::broadcast::channel::<ConsoleCommand>(4);
     let mut txrx = ConTxRx(tx,rx);
 
-    let _cjh = 
     if settings.environment.console {
         let args = args.clone();
         let txrx = txrx.clone();
 
-        Some(std::thread::spawn(move || {
+        std::thread::spawn(move || {
             let _ = console::console(args, sett_rwl.clone(), txrx);
-        }))
+        });
     }
-    else { None };
 
     let settings = Arc::new(settings);
-    let settings2 = settings.clone();
     
-    if let Some(mut jh) = process(args, settings2, txrx.clone()) { 
+    if let Some(mut jh) = process(args.clone(), settings.clone(), txrx.clone()) { 
+        let args = args.clone();
         let settings = settings.clone();
         RT.get().unwrap().block_on(async move {
+            let mut term_counter = 0;
+
             loop {
                 tokio::select! {
                     res = &mut jh => {
@@ -92,18 +92,51 @@ fn main() {
                                 jh.abort();
                                 break;
                             },
+                            Ok(ConsoleCommand::Stop) => {
+                                let _ = jh.await.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
+                                break;
+                            },
                             Ok(ConsoleCommand::Shutdown) => {
                                 let _ = jh.await.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
                                 break;
                             },
                             Ok(ConsoleCommand::Restart) => {
                                 let _ = jh.await.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
-                                break;
+                                jh = RT.get().unwrap().spawn(start_servers(args.clone(), settings.clone(), txrx.clone()));
                             },
                             Err(_) => {
                                 // elog_with_level!(true, settings.logging.init_error, "command crashed", e)
                             },
                         }
+                    },
+                    _ = tokio::signal::ctrl_c() => {
+                        match term_counter {
+                            0 => {
+                                _ = txrx.0.send(ConsoleCommand::Stop);
+                                log_with_level!(true, settings.logging.termination, "stopping");
+                            },
+                            1 => {
+                                _ = txrx.0.send(ConsoleCommand::Kill);
+                                log_with_level!(true, settings.logging.termination, "killing servers");
+                            },
+                            _ => {
+                                log_with_level!(true, settings.logging.termination, "terminating process");
+                                std::process::exit(1);
+                            },
+                        }
+                        term_counter += 1;
+                    },
+                    _ = async move {
+                        #[cfg(unix)]
+                        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                            Ok(mut s) => s.recv().await,
+                            Err(_) => std::future::pending::<Option<()>>().await
+                        }
+                        #[cfg(not(unix))]
+                        std::future::pending::<Option<()>>().await
+                    } => {
+                        let _ = txrx.0.send(ConsoleCommand::Stop);
+                        log_with_level!(true, settings.logging.termination, "stopping");
                     }
                 }
             }
@@ -184,6 +217,8 @@ fn setup_settings(args: &Cli, initial_logging: &LogSettings, sname: String, spfa
 
         console_repeat: initial_logging.console_repeat.or(settings.logging.console_repeat),
         console_operation: initial_logging.console_operation.or(settings.logging.console_operation),
+
+        termination: initial_logging.termination.or(settings.logging.termination),
     };
 
     settings

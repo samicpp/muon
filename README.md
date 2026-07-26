@@ -40,13 +40,15 @@ or fork the repo and open a pull request. <br/>
 - [x] colorize log output
 - [x] create runtime console
 - [x] allow stopping the servers / listeners
-- [ ] allow setting console to listen over tcp
-- [ ] allow console to use rhai for scripting
+- [x] graceful shutdown with ctrl+c
 - [ ] allow reloading settings file
+- [ ] allow console to use rhai for scripting
+- [ ] allow setting console to listen over tcp
 - [ ] advanced socket options with socket2
-- [ ] support HTTP/1.1 pipelining
 - [ ] allow exporting/sending server connection data
-- [ ] temporarily support HTTP/3 through quinn
+- [ ] store logging information about requests and more
+- [ ] ~~temporarily support HTTP/3 through quinn~~
+- [ ] ~~support HTTP/1.1 pipelining~~
 
 ## TODO::Features::SamicppHandler
 - [x] support serving files
@@ -61,7 +63,6 @@ or fork the repo and open a pull request. <br/>
 - [ ] make some built in method of making services through data driven behaviour
 - [ ] allow chaining builtin services using rhai
 - [ ] allow sql and redis connectivity for local variables
-- [ ] store logging information about clients and more
 - [ ] support forwarding the request by proxying
 - [ ] allow forwarding connection based on file/socket descriptors and ffi. example `extern "C" fn muon_receive_tcp(fd: *mut Fd) -> bool { /* ... */ }` in a running process 
 - [ ] embed Deno engine to execute javascript

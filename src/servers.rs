@@ -458,6 +458,7 @@ pub async fn start_tcp(
                             ConsoleCommand::Shutdown => break,
                             ConsoleCommand::Restart => break,
                             ConsoleCommand::Kill => break,
+                            ConsoleCommand::Stop => break,
                         }
                     },
                     Err(_) => { },
@@ -517,6 +518,7 @@ pub async fn start_tls(
                             ConsoleCommand::Shutdown => break,
                             ConsoleCommand::Restart => break,
                             ConsoleCommand::Kill => break,
+                            ConsoleCommand::Stop => break,
                         }
                     },
                     Err(_) => { },
@@ -576,6 +578,7 @@ pub async fn start_dyn_tls(
                             ConsoleCommand::Shutdown => break,
                             ConsoleCommand::Restart => break,
                             ConsoleCommand::Kill => break,
+                            ConsoleCommand::Stop => break,
                         }
                     },
                     Err(_) => { },
@@ -632,6 +635,7 @@ pub async fn serve<L: Listener>(settings: Arc<Settings>, listener: L, handler: A
                             ConsoleCommand::Shutdown => break,
                             ConsoleCommand::Restart => break,
                             ConsoleCommand::Kill => break,
+                            ConsoleCommand::Stop => break,
                         }
                     },
                     Err(_) => { },

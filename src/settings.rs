@@ -181,6 +181,8 @@ pub struct LogSettings {
 
     pub console_repeat: Option<bool>,
     pub console_operation: Option<bool>,
+
+    pub termination: Option<bool>,
 }
 impl LogSettings {
     pub const fn default() -> Self {
@@ -228,6 +230,8 @@ impl LogSettings {
 
             console_repeat: None,
             console_operation: None,
+
+            termination: None,
         }
     }
     pub fn disable_all(&mut self) {
@@ -275,6 +279,8 @@ impl LogSettings {
 
             console_repeat: Some(false),
             console_operation: Some(false),
+
+            termination: Some(false),
         }
     }
     pub fn enable_all(&mut self) {
@@ -322,6 +328,8 @@ impl LogSettings {
 
             console_repeat: Some(true),
             console_operation: Some(true),
+
+            termination: Some(true),
         }
 
     }
@@ -373,6 +381,8 @@ impl LogSettings {
 
         self.console_repeat.swap_if_none(false);
         self.console_operation.swap_if_none(false);
+
+        self.termination.swap_if_none(false);
     }
     pub fn enable_unset(&mut self) {
         self.init.swap_if_none(true);
@@ -412,6 +422,8 @@ impl LogSettings {
 
         self.console_repeat.swap_if_none(true);
         self.console_operation.swap_if_none(true);
+
+        self.termination.swap_if_none(true);
     }
 
     pub fn update_loglevel(&mut self, level: i16, restv: bool) {
@@ -448,6 +460,7 @@ impl LogSettings {
             self.exit.swap_if_none(true);
             self.request.swap_if_none(true);
             self.response.swap_if_none(true);
+            self.termination.swap_if_none(true);
             rest = restv;
         }
         // warning

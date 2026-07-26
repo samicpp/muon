@@ -14,6 +14,7 @@ impl Clone for ConTxRx {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConsoleCommand {
     Kill,
+    Stop,
     Shutdown,
     Restart,
 }
@@ -28,6 +29,11 @@ pub fn console(_args: Arc<Cli>, settings: Arc<RwLock<Settings>>, txrx: ConTxRx) 
 
         if buff == "kill\n" {
             let _ = txrx.0.send(ConsoleCommand::Kill);
+            log_with_level!(false, settings.read().unwrap().logging.console_operation, "stopping");
+            break;
+        } 
+        else if buff == "stop\n" {
+            let _ = txrx.0.send(ConsoleCommand::Stop);
             log_with_level!(false, settings.read().unwrap().logging.console_operation, "stopping");
             break;
         } 
