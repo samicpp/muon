@@ -56,6 +56,9 @@ pub struct Binding {
     pub reuse_addr: Option<bool>,
     pub reuse_port: Option<bool>,
     pub nodelay: Option<bool>,
+    pub keepalive: Option<bool>,
+    #[serde(default = "def_true")] 
+    pub zero_linger: bool,
     // pub dualstack: Option<bool>,
     pub recv_bufsize: Option<u32>,
     pub send_bufsize: Option<u32>,
@@ -75,10 +78,19 @@ pub struct Binding {
 pub struct NetworkSettings {
     #[serde(default)]
     pub binding: Vec<Binding>,
+    // pub max_connections: Option<u64>,
     
     #[serde(default = "def_one_or_many")]
     pub address: OneOrMany<String>,
     pub backlog: Option<u32>,
+    pub reuse_addr: Option<bool>,
+    pub reuse_port: Option<bool>,
+    pub nodelay: Option<bool>,
+    pub keepalive: Option<bool>,
+    #[serde(default = "def_true")] 
+    pub zero_linger: bool,
+    pub recv_bufsize: Option<u32>,
+    pub send_bufsize: Option<u32>,
     
     #[serde(default)]
     pub sni: Vec<SniConfig>,

@@ -1,5 +1,7 @@
 use std::sync::{Arc, RwLock};
 
+use tokio::io::AsyncBufReadExt;
+
 use crate::{arguments::Cli, log_with_level, settings::Settings};
 
 
@@ -16,14 +18,15 @@ pub enum ConsoleCommand {
     Kill,
     Stop,
     Shutdown,
+    Reload,
     Restart,
 }
 
-pub fn console(_args: Arc<Cli>, settings: Arc<RwLock<Settings>>, txrx: ConTxRx) -> std::io::Result<()> {
-    let stdin = std::io::stdin();
+pub async fn console(_args: Arc<Cli>, settings: Arc<RwLock<Settings>>, txrx: ConTxRx) -> std::io::Result<()> {
+    let mut stdin = tokio::io::BufReader::new(tokio::io::stdin());
     while settings.read().unwrap().environment.console {
         let mut buff = String::new();
-        stdin.read_line(&mut buff)?;
+        stdin.read_line(&mut buff).await?;
         log_with_level!(false, settings.read().unwrap().logging.console_repeat, "\x1b[32m{:?}\x1b[0m", buff);
         
 
@@ -43,6 +46,11 @@ pub fn console(_args: Arc<Cli>, settings: Arc<RwLock<Settings>>, txrx: ConTxRx) 
         }
         else if buff == "restart\n" {
             let _ = txrx.0.send(ConsoleCommand::Restart);
+            log_with_level!(false, settings.read().unwrap().logging.console_operation, "stopping");
+            break;
+        }
+        else if buff == "reload\n" {
+            let _ = txrx.0.send(ConsoleCommand::Reload);
             log_with_level!(false, settings.read().unwrap().logging.console_operation, "stopping");
             break;
         }

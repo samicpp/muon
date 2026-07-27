@@ -41,7 +41,7 @@ or fork the repo and open a pull request. <br/>
 - [x] create runtime console
 - [x] allow stopping the servers / listeners
 - [x] graceful shutdown with ctrl+c
-- [ ] allow reloading settings file
+- [x] allow reloading settings file
 - [ ] allow console to use rhai for scripting
 - [ ] allow setting console to listen over tcp
 - [ ] advanced socket options with socket2

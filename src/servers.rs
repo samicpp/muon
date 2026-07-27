@@ -7,7 +7,7 @@ use tokio::net::UnixListener;
 use tokio::{io::{BufReader, ReadHalf, WriteHalf}, net::{TcpListener, TcpSocket, TcpStream}};
 use tokio_rustls::TlsAcceptor;
 // use owo_colors::OwoColorize;
-use crate::{arguments::Cli, console::{ConTxRx, ConsoleCommand}, elog_with_level, handlers::{ClientInfo, HttpHandler, debug::DebugHandler}, log_with_level, settings::Settings};
+use crate::{arguments::Cli, console::{ConTxRx, ConsoleCommand}, elog_with_level, handlers::{ClientInfo, HttpHandler, debug::DebugHandler}, log_with_level, settings::{self, Settings}};
 #[cfg(feature = "handler-simple")]
 use crate::handlers::simple::SimpleHandler;
 #[cfg(feature = "handler-samicpp")]
@@ -99,7 +99,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxR
 
         match prot {
             "tcp" | "http" => {
-                match create_socket(loc, backlog) {
+                match create_socket(loc, backlog, &settings.network) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, addr);
@@ -108,7 +108,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxR
                 }
             },
             "http1" => {
-                match create_socket(loc, backlog) {
+                match create_socket(loc, backlog, &settings.network) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, addr);
@@ -117,7 +117,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxR
                 }
             },
             "http1.1" => {
-                match create_socket(loc, backlog) {
+                match create_socket(loc, backlog, &settings.network) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, addr);
@@ -126,7 +126,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxR
                 }
             },
             "http1.0" => {
-                match create_socket(loc, backlog) {
+                match create_socket(loc, backlog, &settings.network) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, addr);
@@ -135,7 +135,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxR
                 }
             },
             "http0.9" => {
-                match create_socket(loc, backlog) {
+                match create_socket(loc, backlog, &settings.network) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 52, 52, addr);
@@ -145,7 +145,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxR
             },
 
             "http2" => {
-                match create_socket(loc, backlog) {
+                match create_socket(loc, backlog, &settings.network) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 143, 52, addr);
@@ -155,7 +155,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxR
             },
 
             "https" => {
-                match create_socket(loc, backlog) {
+                match create_socket(loc, backlog, &settings.network) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 76, 235, 52, addr);
@@ -164,7 +164,7 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxR
                 }
             },
             "httpx" => {
-                match create_socket(loc, backlog) {
+                match create_socket(loc, backlog, &settings.network) {
                     Err(err) => elog_with_level!(true, settings.logging.init_error, "couldnt listen to {loc} \x1b[91m{}\x1b[0m", err),
                     Ok(listener) => {
                         log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 52, 165, 235, addr);
@@ -212,6 +212,8 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxR
         if let Some(opt) = binding.reuse_addr { let _ = socket.set_reuseaddr(opt); }
         if let Some(opt) = binding.reuse_port { let _ = socket.set_reuseport(opt); }
         if let Some(opt) = binding.nodelay { let _ = socket.set_nodelay(opt); }
+        if let Some(opt) = binding.keepalive { let _ = socket.set_keepalive(opt); }
+        if               true == binding.zero_linger { let _ = socket.set_zero_linger(); }
         if let Some(opt) = binding.recv_bufsize { let _ = socket.set_recv_buffer_size(opt); }
         if let Some(opt) = binding.send_bufsize { let _ = socket.set_send_buffer_size(opt); }
 
@@ -238,30 +240,40 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxR
                 allow_prior_knowledge = true;
                 assume = None;
                 dyn_tls = None;
+
+                log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, &binding.address);
             },
             "http1" => {
                 allow_h2c = false;
                 allow_prior_knowledge = false;
                 assume = None;
                 dyn_tls = None;
+
+                log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, &binding.address);
             },
             "http1.1" => {
                 allow_h2c = false;
                 allow_prior_knowledge = false;
                 assume = Some(HttpVersion::Http11);
                 dyn_tls = None;
+
+                log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, &binding.address);
             },
             "http1.0" => {
                 allow_h2c = false;
                 allow_prior_knowledge = false;
                 assume = Some(HttpVersion::Http10);
                 dyn_tls = None;
+
+                log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 211, 52, &binding.address);
             },
             "http0.9" => {
                 allow_h2c = false;
                 allow_prior_knowledge = false;
                 assume = Some(HttpVersion::Http09);
                 dyn_tls = None;
+
+                log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 52, 52, &binding.address);
             },
 
             "http2" => {
@@ -269,6 +281,8 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxR
                 allow_prior_knowledge = false;
                 assume = Some(HttpVersion::Http2);
                 dyn_tls = None;
+
+                log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 235, 143, 52, &binding.address);
             },
 
             "https" => {
@@ -276,12 +290,16 @@ pub async fn start_servers(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxR
                 allow_prior_knowledge = false;
                 assume = None;
                 dyn_tls = Some(false);
+
+                log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 76, 235, 52, &binding.address);
             },
             "httpx" => {
                 allow_h2c = true;
                 allow_prior_knowledge = true;
                 assume = None;
                 dyn_tls = Some(true);
+
+                log_with_level!(true, settings.logging.init, "\x1b[38;2;{};{};{}m\x1b[2m- serving \x1b[22m\x1b[1m{}\x1b[0m", 52, 165, 235, &binding.address);
             },
 
             _ => {
@@ -399,7 +417,7 @@ impl Listener for UnixListener {
 //     }
 // }
 
-pub fn create_socket<A: std::net::ToSocketAddrs>(addr: A, backlog: u32) -> std::io::Result<TcpListener> {
+pub fn create_socket<A: std::net::ToSocketAddrs>(addr: A, backlog: u32, ns: &settings::NetworkSettings) -> std::io::Result<TcpListener> {
     let Some(address) = addr.to_socket_addrs()?.next() else { 
         return Err(std::io::Error::new(std::io::ErrorKind::AddrNotAvailable, "invalid address")) 
     };
@@ -411,6 +429,15 @@ pub fn create_socket<A: std::net::ToSocketAddrs>(addr: A, backlog: u32) -> std::
     else { 
         TcpSocket::new_v6() 
     }?;
+    
+    if let Some(opt) = ns.reuse_addr { let _ = socket.set_reuseaddr(opt); }
+    if let Some(opt) = ns.reuse_port { let _ = socket.set_reuseport(opt); }
+    if let Some(opt) = ns.nodelay { let _ = socket.set_nodelay(opt); }
+    if let Some(opt) = ns.keepalive { let _ = socket.set_keepalive(opt); }
+    if               true == ns.zero_linger { let _ = socket.set_zero_linger(); }
+    if let Some(opt) = ns.recv_bufsize { let _ = socket.set_recv_buffer_size(opt); }
+    if let Some(opt) = ns.send_bufsize { let _ = socket.set_send_buffer_size(opt); }
+
     socket.bind(address)?;
     socket.listen(backlog)
 }
@@ -455,9 +482,10 @@ pub async fn start_tcp(
                 match command {
                     Ok(cmd) => {
                         match cmd {
-                            ConsoleCommand::Shutdown => break,
-                            ConsoleCommand::Restart => break,
-                            ConsoleCommand::Kill => break,
+                            ConsoleCommand::Shutdown |
+                            ConsoleCommand::Restart |
+                            ConsoleCommand::Reload |
+                            ConsoleCommand::Kill |
                             ConsoleCommand::Stop => break,
                         }
                     },
@@ -515,9 +543,10 @@ pub async fn start_tls(
                 match command {
                     Ok(cmd) => {
                         match cmd {
-                            ConsoleCommand::Shutdown => break,
-                            ConsoleCommand::Restart => break,
-                            ConsoleCommand::Kill => break,
+                            ConsoleCommand::Shutdown |
+                            ConsoleCommand::Restart |
+                            ConsoleCommand::Reload |
+                            ConsoleCommand::Kill |
                             ConsoleCommand::Stop => break,
                         }
                     },
@@ -575,9 +604,10 @@ pub async fn start_dyn_tls(
                 match command {
                     Ok(cmd) => {
                         match cmd {
-                            ConsoleCommand::Shutdown => break,
-                            ConsoleCommand::Restart => break,
-                            ConsoleCommand::Kill => break,
+                            ConsoleCommand::Shutdown |
+                            ConsoleCommand::Restart |
+                            ConsoleCommand::Reload |
+                            ConsoleCommand::Kill |
                             ConsoleCommand::Stop => break,
                         }
                     },
@@ -632,9 +662,10 @@ pub async fn serve<L: Listener>(settings: Arc<Settings>, listener: L, handler: A
                 match command {
                     Ok(cmd) => {
                         match cmd {
-                            ConsoleCommand::Shutdown => break,
-                            ConsoleCommand::Restart => break,
-                            ConsoleCommand::Kill => break,
+                            ConsoleCommand::Shutdown |
+                            ConsoleCommand::Restart |
+                            ConsoleCommand::Reload |
+                            ConsoleCommand::Kill |
                             ConsoleCommand::Stop => break,
                         }
                     },

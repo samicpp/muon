@@ -58,102 +58,118 @@ fn main() {
 
 
     let args = Arc::new(args);
-    let settings: Settings = setup_settings(&args, &initial_logging, sname, spfallback);
-    let sett_rwl = Arc::new(RwLock::new(settings.clone()));
+    let settings = setup_settings(&args, &initial_logging, &sname, &spfallback);
+    let sett_rwl = Arc::new(RwLock::new(settings));
     let (tx, rx) = tokio::sync::broadcast::channel::<ConsoleCommand>(4);
-    let mut txrx = ConTxRx(tx,rx);
+    let txrx = ConTxRx(tx,rx);
+    let mut running = true;
 
-    if settings.environment.console {
-        let args = args.clone();
-        let txrx = txrx.clone();
+    while running {
+        let settings = Arc::new(sett_rwl.read().unwrap().clone());
+        
+        if let Some(mut jh) = process(args.clone(), settings.clone(), txrx.clone()) { 
+            if sett_rwl.read().unwrap().environment.console {
+                let args = args.clone();
+                let txrx = txrx.clone();
 
-        std::thread::spawn(move || {
-            let _ = console::console(args, sett_rwl.clone(), txrx);
-        });
-    }
+                RT.spawn(console::console(args, sett_rwl.clone(), txrx)).unwrap();
+            }
 
-    let settings = Arc::new(settings);
-    
-    if let Some(mut jh) = process(args.clone(), settings.clone(), txrx.clone()) { 
-        let args = args.clone();
-        let settings = settings.clone();
-        RT.get().unwrap().block_on(async move {
-            let mut term_counter = 0;
+            let args = args.clone();
+            let settings = settings.clone();
+            let mut txrx = txrx.clone();
+            running = 
+            RT.block_on(async move {
+                let mut term_counter = 0;
+                let mut restart = false;
 
-            loop {
-                tokio::select! {
-                    res = &mut jh => {
-                        let _ = res.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
-                        break;
-                    },
-                    cmd = txrx.1.recv() => {
-                        match cmd {
-                            Ok(ConsoleCommand::Kill) => {
-                                jh.abort();
-                                break;
-                            },
-                            Ok(ConsoleCommand::Stop) => {
-                                let _ = jh.await.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
-                                break;
-                            },
-                            Ok(ConsoleCommand::Shutdown) => {
-                                let _ = jh.await.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
-                                break;
-                            },
-                            Ok(ConsoleCommand::Restart) => {
-                                let _ = jh.await.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
-                                jh = RT.get().unwrap().spawn(start_servers(args.clone(), settings.clone(), txrx.clone()));
-                            },
-                            Err(_) => {
-                                // elog_with_level!(true, settings.logging.init_error, "command crashed", e)
-                            },
+                loop {
+                    tokio::select! {
+                        res = &mut jh => {
+                            let _ = res.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
+                            break;
+                        },
+                        cmd = txrx.1.recv() => {
+                            match cmd {
+                                Ok(ConsoleCommand::Kill) => {
+                                    jh.abort();
+                                    break;
+                                },
+                                Ok(ConsoleCommand::Stop) => {
+                                    let _ = jh.await.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
+                                    break;
+                                },
+                                Ok(ConsoleCommand::Shutdown) => {
+                                    let _ = jh.await.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
+                                    break;
+                                },
+                                Ok(ConsoleCommand::Reload) => {
+                                    let _ = jh.await.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
+                                    jh = RT.spawn(start_servers(args.clone(), settings.clone(), txrx.clone())).unwrap();
+                                },
+                                Ok(ConsoleCommand::Restart) => {
+                                    let _ = jh.await.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
+                                    restart = true;
+                                    break;
+                                },
+                                Err(_) => {
+                                    // elog_with_level!(true, settings.logging.init_error, "command crashed", e)
+                                },
+                            }
+                        },
+                        _ = tokio::signal::ctrl_c() => {
+                            match term_counter {
+                                0 => {
+                                    _ = txrx.0.send(ConsoleCommand::Stop);
+                                    log_with_level!(true, settings.logging.termination, "stopping");
+                                },
+                                1 => {
+                                    _ = txrx.0.send(ConsoleCommand::Kill);
+                                    log_with_level!(true, settings.logging.termination, "killing servers");
+                                },
+                                _ => {
+                                    log_with_level!(true, settings.logging.termination, "terminating process");
+                                    std::process::exit(1);
+                                },
+                            }
+                            term_counter += 1;
+                        },
+                        _ = async move {
+                            #[cfg(unix)]
+                            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                                Ok(mut s) => s.recv().await,
+                                Err(_) => std::future::pending::<Option<()>>().await
+                            }
+                            #[cfg(not(unix))]
+                            std::future::pending::<Option<()>>().await
+                        } => {
+                            let _ = txrx.0.send(ConsoleCommand::Stop);
+                            log_with_level!(true, settings.logging.termination, "stopping");
                         }
-                    },
-                    _ = tokio::signal::ctrl_c() => {
-                        match term_counter {
-                            0 => {
-                                _ = txrx.0.send(ConsoleCommand::Stop);
-                                log_with_level!(true, settings.logging.termination, "stopping");
-                            },
-                            1 => {
-                                _ = txrx.0.send(ConsoleCommand::Kill);
-                                log_with_level!(true, settings.logging.termination, "killing servers");
-                            },
-                            _ => {
-                                log_with_level!(true, settings.logging.termination, "terminating process");
-                                std::process::exit(1);
-                            },
-                        }
-                        term_counter += 1;
-                    },
-                    _ = async move {
-                        #[cfg(unix)]
-                        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-                            Ok(mut s) => s.recv().await,
-                            Err(_) => std::future::pending::<Option<()>>().await
-                        }
-                        #[cfg(not(unix))]
-                        std::future::pending::<Option<()>>().await
-                    } => {
-                        let _ = txrx.0.send(ConsoleCommand::Stop);
-                        log_with_level!(true, settings.logging.termination, "stopping");
                     }
                 }
-            }
-        })
-    }
-    // if let Some(cjh) = cjh {
-    //     let _ = cjh.join();
-    // }
 
-    elog_with_level!(true, settings.logging.exit, "done, exiting")
+                restart
+            }).unwrap();
+        }
+        // if let Some(cjh) = cjh {
+        //     let _ = cjh.join();
+        // }
+
+        if running {
+            let settings: Settings = setup_settings(&args, &initial_logging, &sname, &spfallback);
+            *sett_rwl.write().unwrap() = settings;
+        }
+    }
+
+    elog_with_level!(true, sett_rwl.read().unwrap().logging.exit, "done, exiting")
 }
 
-fn setup_settings(args: &Cli, initial_logging: &LogSettings, sname: String, spfallback: String) -> Settings {
+fn setup_settings(args: &Cli, initial_logging: &LogSettings, sname: &str, spfallback: &str) -> Settings {
     let settings = 
     match 
     if let Some(spath) = &args.settings { Ok(PathBuf::from(spath)) } 
-    else { std::env::current_exe().map(|p| p.parent().map(|p| p.join(sname)).unwrap_or(PathBuf::from(&spfallback))) } 
+    else { std::env::current_exe().map(|p| p.parent().map(|p| p.join(sname)).unwrap_or(PathBuf::from(spfallback))) } 
     {
         Err(e) => {
             elog_with_level!(true, initial_logging.init_error, "couldnt get executable path \x1b[91m{}\x1b[0m", e);
@@ -254,6 +270,11 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxRx) -> Option<tok
         elog_with_level!(true, settings.logging.init_error, "couldnt set cwd \x1b[91m{}\x1b[0m", err);
     }
 
+    // if let Some(rt) = RT.get() {
+    //     let handle = rt.spawn(start_servers(args, settings, txrx));
+    //     Some(handle)
+    // }
+    // else 
     if settings.environment.multi_threaded {
         let mut rt = tokio::runtime::Builder::new_multi_thread();
         
@@ -270,8 +291,7 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxRx) -> Option<tok
         match rt.build() {
             Ok(rt) => {
                 RT.set(rt).unwrap();
-                let handle = RT.get().unwrap().spawn(start_servers(args, settings, txrx));
-                Some(handle)
+                RT.spawn(start_servers(args, settings, txrx))
             },
             Err(err) => {
                 elog_with_level!(true, settings.logging.init_error, "failed to build runtime \x1b[91m{}\x1b[0m", err);
@@ -289,8 +309,7 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxRx) -> Option<tok
         match rt.build() {
             Ok(rt) => {
                 RT.set(rt).unwrap();
-                let handle = RT.get().unwrap().spawn(start_servers(args, settings, txrx));
-                Some(handle)
+                RT.spawn(start_servers(args, settings, txrx))
             },
             Err(err) => {
                 elog_with_level!(true, settings.logging.init_error, "failed to build runtime \x1b[91m{}\x1b[0m", err);
