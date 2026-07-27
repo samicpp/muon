@@ -83,9 +83,9 @@ pub async fn handler<R: ReadStream, W: WriteStream>(mut read: BufReader<R>, mut 
                         match cmd {
                             ConsoleCommand::Shutdown |
                             ConsoleCommand::Restart |
-                            ConsoleCommand::Reload |
                             ConsoleCommand::Kill |
                             ConsoleCommand::Stop => break,
+                            ConsoleCommand::Reload => {},
                         }
                     },
                     Err(_) => { },

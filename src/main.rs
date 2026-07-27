@@ -273,12 +273,11 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxRx) -> Option<tok
         elog_with_level!(true, settings.logging.init_error, "couldnt set cwd \x1b[91m{}\x1b[0m", err);
     }
 
-    // if let Some(rt) = RT.get() {
-    //     let handle = rt.spawn(start_servers(args, settings, txrx));
-    //     Some(handle)
-    // }
-    // else 
-    if settings.environment.multi_threaded {
+    if RT.isset() && !settings.environment.rebuild_on_restart {
+        let handle = RT.spawn(start_servers(args, settings, txrx)).unwrap();
+        Some(handle)
+    }
+    else if settings.environment.multi_threaded {
         let mut rt = tokio::runtime::Builder::new_multi_thread();
         
         rt.enable_all();

@@ -120,6 +120,9 @@ pub struct EnvironmentSettings {
     pub thread_keep_alive_ns: Option<u64>,
     pub thread_stack_size: Option<usize>,
     pub max_blocking_threads: Option<usize>,
+
+    #[serde(default = "def_false")]
+    pub rebuild_on_restart: bool,
 }
 
 #[inline] fn def_serve_dir() -> String { "./".into() }
