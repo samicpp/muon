@@ -42,11 +42,11 @@ or fork the repo and open a pull request. <br/>
 - [x] allow stopping the servers / listeners
 - [x] graceful shutdown with ctrl+c
 - [x] allow reloading settings file
+- [x] allow setting console to listen over tcp
 - [ ] allow console to use rhai for scripting
-- [ ] allow setting console to listen over tcp
 - [ ] advanced socket options with socket2
-- [ ] allow exporting/sending server connection data
 - [ ] store logging information about requests and more
+- [ ] allow exporting/sending server connection data
 - [ ] ~~temporarily support HTTP/3 through quinn~~
 - [ ] ~~support HTTP/1.1 pipelining~~
 

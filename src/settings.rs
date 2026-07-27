@@ -108,7 +108,7 @@ pub struct EnvironmentSettings {
 
     #[serde(default = "def_false")]
     pub console: bool,
-    // pub console_address: Option<String>,
+    pub console_address: Option<String>,
 
     #[serde(default = "def_true")]
     pub multi_threaded: bool,

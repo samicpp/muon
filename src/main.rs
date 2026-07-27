@@ -7,7 +7,7 @@ mod servers;
 mod logger;
 mod console;
 
-use std::{path::PathBuf, sync::{Arc, RwLock}, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use clap::Parser;
 use photon::{extra::PolyHttpSocket, ffihttp::DynStream, httprs_core::ffi::own::RT};
@@ -58,21 +58,21 @@ fn main() {
 
 
     let args = Arc::new(args);
-    let settings = setup_settings(&args, &initial_logging, &sname, &spfallback);
-    let sett_rwl = Arc::new(RwLock::new(settings));
+    let mut sett = setup_settings(&args, &initial_logging, &sname, &spfallback);
+    // let sett_rwl = Arc::new(RwLock::new(settings));
     let (tx, rx) = tokio::sync::broadcast::channel::<ConsoleCommand>(4);
     let txrx = ConTxRx(tx,rx);
     let mut running = true;
 
     while running {
-        let settings = Arc::new(sett_rwl.read().unwrap().clone());
+        let settings = Arc::new(sett.clone());
         
         if let Some(mut jh) = process(args.clone(), settings.clone(), txrx.clone()) { 
-            if sett_rwl.read().unwrap().environment.console {
+            if settings.environment.console {
                 let args = args.clone();
                 let txrx = txrx.clone();
 
-                RT.spawn(console::console(args, sett_rwl.clone(), txrx)).unwrap();
+                RT.spawn(console::console(args, settings.clone(), txrx)).unwrap();
             }
 
             let args = args.clone();
@@ -87,6 +87,7 @@ fn main() {
                     tokio::select! {
                         res = &mut jh => {
                             let _ = res.map_err(|e| elog_with_level!(true, settings.logging.init_error, "server crahsed \x1b[91m{}\x1b[0m", e));
+                            restart = false;
                             break;
                         },
                         cmd = txrx.1.recv() => {
@@ -133,6 +134,7 @@ fn main() {
                                 },
                             }
                             term_counter += 1;
+                            restart = false;
                         },
                         _ = async move {
                             #[cfg(unix)]
@@ -145,6 +147,7 @@ fn main() {
                         } => {
                             let _ = txrx.0.send(ConsoleCommand::Stop);
                             log_with_level!(true, settings.logging.termination, "stopping");
+                            restart = false;
                         }
                     }
                 }
@@ -158,11 +161,11 @@ fn main() {
 
         if running {
             let settings: Settings = setup_settings(&args, &initial_logging, &sname, &spfallback);
-            *sett_rwl.write().unwrap() = settings;
+            sett = settings;
         }
     }
 
-    elog_with_level!(true, sett_rwl.read().unwrap().logging.exit, "done, exiting")
+    elog_with_level!(true, sett.logging.exit, "done, exiting")
 }
 
 fn setup_settings(args: &Cli, initial_logging: &LogSettings, sname: &str, spfallback: &str) -> Settings {
