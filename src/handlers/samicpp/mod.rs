@@ -1,8 +1,8 @@
-use std::{collections::HashMap, format, ops::Range, path::{Path, PathBuf}, ptr, sync::{Arc, RwLock}, time::SystemTime};
+use std::{collections::HashMap, format, ops::Range, path::{Path, PathBuf}, ptr, sync::Arc, time::SystemTime};
 
 use dashmap::DashMap;
 use libloading::Library;
-use photon::{httprs_core::ffi::futures::FfiFuture, shared::{HttpClient, HttpMethod, HttpSocket, HttpVersion, LibError, LibResult}};
+use photon::{httprs_core::{atomic_arc::AtomicArc, futures::FfiFuture}, shared::{HttpClient, HttpMethod, HttpSocket, HttpVersion, LibError, LibResult}};
 use regex::Regex;
 use serde::Deserialize;
 use tokio::{fs::File, io::{AsyncReadExt, AsyncSeekExt}};
@@ -29,7 +29,7 @@ pub struct RouteConfig {
     pub router: Option<String>,
     pub auth: Option<String>,
     pub prerequisites: Option<OneOrMany<Prerequisite>>,
-    pub prereq_fail: Option<PrereqFail>,
+    // pub prereq_fail: Option<PrereqFail>,
 
     #[serde(default = "def_false")]
     pub allow_invalid_clients: bool,
@@ -65,7 +65,7 @@ impl Default for RouteConfig {
             router: None, 
             auth: None, 
             prerequisites: None, 
-            prereq_fail: None, 
+            // prereq_fail: None, 
 
             allow_invalid_clients: false,
             forbid: None, 
@@ -122,13 +122,14 @@ pub enum Prerequisite {
     Version(HttpVersion),
     NotVersion(HttpVersion),
 }
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
-#[serde(rename_all = "kebab-case")]
-pub enum PrereqFail {
-    Error(u16, String),
-    Redirect(String, String),
-    File(u16, PathBuf),
-}
+// #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+// #[serde(rename_all = "kebab-case")]
+// pub enum PrereqFail {
+//     Error(u16, String),
+//     Redirect(String, String),
+//     File(u16, PathBuf),
+//     Route(String),
+// }
 pub struct FfiModule {
     #[allow(dead_code)]
     pub lib: Library,
@@ -140,8 +141,8 @@ pub struct SamicppHandler {
     pub args: Arc<Cli>,
     pub settings: Arc<Settings>,
 
-    pub routes_modified: RwLock<SystemTime>,
-    pub routes: RwLock<HashMap<String, Arc<RouteConfig>>>,
+    pub routes_modified: AtomicArc<SystemTime>,
+    pub routes: AtomicArc<HashMap<String, Arc<RouteConfig>>>,
     pub routes_cache: DashMap<String, Arc<RouteConfig>>,
     pub routes_path: PathBuf,
 
@@ -188,6 +189,7 @@ async fn authenticate(http: &mut DynHttpSocket, realm: &str, usrpass: &[u8]) -> 
     http.set_header("WWW-Authenticate", format!("Basic realm=\"{realm}\", charset=\"UTF-8\""));
     http.set_header("Content-Length", "0".into());
     http.close(b"").await?;
+    http.flush().await?;
     Ok(false)
 }
 fn log_client(client: &HttpClient, fullhost: &str) -> String {
@@ -232,10 +234,10 @@ impl HttpHandler for SamicppHandler {
         // let client = http.get_client();
         let path = sanitize_path(&http.get_client().path);
         let path_str = path.as_os_str().to_string_lossy();
-        let host = http.get_client().host.as_deref().unwrap_or("about:blank");
-        let fullhost = format!("{}://{}/{}", if cinfo.is_secure { "https" } else { "http" }, host, &path_str);
+        let host = http.get_client().host.as_ref().map(|h| h.clone()).unwrap_or("about:blank".into());
+        let fullhost = format!("{}://{}/{}", if cinfo.is_secure { "https" } else { "http" }, &host, &path_str);
         let pfullhost = format!("[{}]{}", http.get_client().version, &fullhost);
-        let domain = domain_from_host(host);
+        let domain = domain_from_host(&host);
 
         log_with_level!(true, self.settings.logging.request, "\x1b[90m[{:?}]\x1b[0m {}", cinfo.addr, log_client(http.get_client(), &fullhost));
         // println!("{:?}", std::path::absolute(&self.routes_path).unwrap());
@@ -258,7 +260,7 @@ impl HttpHandler for SamicppHandler {
             route = Some(conf.clone());
         }
         else {
-            let routes = self.routes.read().unwrap();
+            let routes = self.routes.load().unwrap();
             for (label, opt) in routes.iter() {
                 let label = label.as_str();
                 if 
@@ -280,11 +282,87 @@ impl HttpHandler for SamicppHandler {
                     if self.settings.logging.route_dump.unwrap_or(false) {
                         println!("{} {:#?}", label, opt);
                     }
-                    route = Some(opt.clone());
-                    break;
+
+                    let mut hasfailed = false;
+
+                    if let Some(check) = opt.prerequisites.as_ref().map(|p| p.get()) {
+                        log_with_level!(false, &self.settings.logging.prereq_found, "found {} prereqs", check.len());
+                        // http.read_until_complete().await?;
+                        let clen = http.get_client().headers.get("content-length").and_then(|cl| cl[0].parse::<usize>().ok());
+                        let hasbody = clen.map(|_| true).or(http.get_client().headers.get("transfer-encoding").map(|te| te[0].contains("chunked"))).unwrap_or(false);
+
+                        for pre in check {
+
+                            let failed = 
+                            match pre {
+                                Prerequisite::HasBody if !hasbody => Some(("HasBody", "client has no body")),
+                                Prerequisite::NoBody if hasbody => Some(("NoBody", "client has a body")),
+
+                                Prerequisite::HasHeader(header) if !http.get_client().headers.contains_key(header) => Some(("HasHeader", "client doesnt have header")),
+                                Prerequisite::NoHeader(header) if http.get_client().headers.contains_key(header) => Some(("NoHeader", "client has header")),
+                                Prerequisite::IsContentType(top, sub) => {
+                                    if 
+                                        let Some(ct) = http.get_client().headers.get("content-type") && 
+                                        let Some(mut ct) = ct[0].splitn(2, ';').next().map(|ct| ct.splitn(2, '/')) && 
+                                        let Some(ctt) = ct.next() && 
+                                        ctt == top
+                                    {
+                                        if let Some(sub) = sub && let Some(cts) = ct.next() && cts == sub {
+                                            None
+                                        }
+                                        else {
+                                            Some(("IsContentType", "client doesnt have valid content-type header"))
+                                        }
+                                    }
+                                    else {
+                                        Some(("IsContentType", "client doesnt have valid content-type header"))
+                                    }
+                                },
+
+                                Prerequisite::BodyExactSize(size) if hasbody => {
+                                    if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) != *size { Some(("BodyExactSize", "client body is not exact size")) }
+                                    else if !http.get_client().headers.contains_key("content-length") && http.read_until_complete().await?.body.len() != *size { Some(("BodyExactSize", "client body is not exact size")) }
+                                    else { None }
+                                }
+                                Prerequisite::BodyBiggerThan(size) if hasbody => {
+                                    if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) < *size { Some(("BodyBiggerThan", "client body is smaller than required")) }
+                                    else if !http.get_client().headers.contains_key("content-length") && http.read_until_complete().await?.body.len() < *size { Some(("BodyBiggerThan", "client body is smaller than required")) }
+                                    else { None }
+                                }
+                                Prerequisite::BodySmallerThan(size) if hasbody => {
+                                    if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) > *size { Some(("BodySmallerThan", "client body is bigger than required")) }
+                                    else if !http.get_client().headers.contains_key("content-length") && http.read_until_complete().await?.body.len() > *size { Some(("BodySmallerThan", "client body is bigger than required")) }
+                                    else { None }
+                                }
+
+                                Prerequisite::HasMethod(meth) if http.get_client().method != *meth => Some(("HasMethod", "client doesnt have method")),
+                                Prerequisite::NoMethod(meth) if http.get_client().method == *meth => Some(("NoMethod", "client does have method")),
+
+                                Prerequisite::Version(ver) if http.get_client().version != *ver => Some(("Version", "client isnt correct version")),
+                                Prerequisite::NotVersion(ver) if http.get_client().version == *ver => Some(("NoVersion", "client isnt correct version")),
+
+                                _ => None
+                                // _ => todo!("the rest")
+                            };
+                            let Some(failed) = failed else { continue };
+
+                            hasfailed = true;
+
+                            log_with_level!(true, &self.settings.logging.prereq_failed, "failed prereq {}, {}", failed.0, failed.1);
+                        }
+                        
+                        if !hasfailed {
+                            log_with_level!(false, &self.settings.logging.prereq_passed, "passed prereqs");
+                        }
+                    }
+
+                    if !hasfailed {
+                        route = Some(opt.clone());
+                        break;
+                    }
                 }
             }
-            drop(routes);
+            // drop(routes);
 
             // if let Some(route) = &route {
             //     self.routes_cache.insert(pfullhost, route.clone());
@@ -296,7 +374,7 @@ impl HttpHandler for SamicppHandler {
         let fin_path = std::path::absolute(&fin_path).unwrap_or(fin_path);
 
         if !http.get_client().valid && !route.allow_invalid_clients {
-            self.error(&mut http, &cinfo, &route, 400, &path, &path, "no invalid clients allowed", "detail").await?;
+            self.error(http, &cinfo, &route, 400, &path, &path, "no invalid clients allowed", "detail").await?;
 
         }
 
@@ -305,114 +383,21 @@ impl HttpHandler for SamicppHandler {
         }
 
 
-        else {
-            let mut hasfailed = false;
-            if let Some(check) = route.prerequisites.as_ref().map(|p| p.get()) {
-                log_with_level!(false, &self.settings.logging.prereq_found, "found {} prereqs", check.len());
-                // http.read_until_complete().await?;
-                let clen = http.get_client().headers.get("content-length").and_then(|cl| cl[0].parse::<usize>().ok());
-                let hasbody = clen.map(|_| true).or(http.get_client().headers.get("transfer-encoding").map(|te| te[0].contains("chunked"))).unwrap_or(false);
-
-                for pre in check {
-
-                    let failed = 
-                    match pre {
-                        Prerequisite::HasBody if !hasbody => Some(("HasBody", "client has no body")),
-                        Prerequisite::NoBody if hasbody => Some(("NoBody", "client has a body")),
-
-                        Prerequisite::HasHeader(header) if !http.get_client().headers.contains_key(header) => Some(("HasHeader", "client doesnt have header")),
-                        Prerequisite::NoHeader(header) if http.get_client().headers.contains_key(header) => Some(("NoHeader", "client has header")),
-                        Prerequisite::IsContentType(top, sub) => {
-                            if 
-                                let Some(ct) = http.get_client().headers.get("content-type") && 
-                                let Some(mut ct) = ct[0].splitn(2, ';').next().map(|ct| ct.splitn(2, '/')) && 
-                                let Some(ctt) = ct.next() && 
-                                ctt == top
-                            {
-                                if let Some(sub) = sub && let Some(cts) = ct.next() && cts == sub {
-                                    None
-                                }
-                                else {
-                                    Some(("IsContentType", "client doesnt have valid content-type header"))
-                                }
-                            }
-                            else {
-                                Some(("IsContentType", "client doesnt have valid content-type header"))
-                            }
-                        },
-
-                        // Prerequisite::BodyExactSize(size) if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) != *size || http.read_until_complete().await?.body.len() != *size => Some(("BodyExactSize", "client body is not exact size")),
-                        // Prerequisite::BodyBiggerThan(size) if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) < *size || http.read_until_complete().await?.body.len() < *size => Some(("BodyBiggerThan", "client body is smaller than required")),
-                        // Prerequisite::BodySmallerThan(size) if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) > *size || http.read_until_complete().await?.body.len() > *size => Some(("BodyBiggerThan", "client body is bigger than required")),
-                        Prerequisite::BodyExactSize(size) if hasbody => {
-                            if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) != *size { Some(("BodyExactSize", "client body is not exact size")) }
-                            else if !http.get_client().headers.contains_key("content-length") && http.read_until_complete().await?.body.len() != *size { Some(("BodyExactSize", "client body is not exact size")) }
-                            else { None }
-                        }
-                        Prerequisite::BodyBiggerThan(size) if hasbody => {
-                            if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) < *size { Some(("BodyBiggerThan", "client body is smaller than required")) }
-                            else if !http.get_client().headers.contains_key("content-length") && http.read_until_complete().await?.body.len() < *size { Some(("BodyBiggerThan", "client body is smaller than required")) }
-                            else { None }
-                        }
-                        Prerequisite::BodySmallerThan(size) if hasbody => {
-                            if http.get_client().headers.contains_key("content-length") && clen.unwrap_or(0) > *size { Some(("BodySmallerThan", "client body is bigger than required")) }
-                            else if !http.get_client().headers.contains_key("content-length") && http.read_until_complete().await?.body.len() > *size { Some(("BodySmallerThan", "client body is bigger than required")) }
-                            else { None }
-                        }
-
-                        Prerequisite::HasMethod(meth) if http.get_client().method != *meth => Some(("HasMethod", "client doesnt have method")),
-                        Prerequisite::NoMethod(meth) if http.get_client().method == *meth => Some(("NoMethod", "client does have method")),
-
-                        Prerequisite::Version(ver) if http.get_client().version != *ver => Some(("Version", "client isnt correct version")),
-                        Prerequisite::NotVersion(ver) if http.get_client().version == *ver => Some(("NoVersion", "client isnt correct version")),
-
-                        _ => None
-                        // _ => todo!("the rest")
-                    };
-                    let Some(failed) = failed else { continue };
-
-                    log_with_level!(true, &self.settings.logging.prereq_failed, "failed prereq {}, {}", failed.0, failed.1);
-
-                    match &route.prereq_fail {
-                        None => self.error(&mut http, &cinfo, &route, 403, &path, &path, "failed prereq", failed.1).await?,
-                        Some(PrereqFail::Error(code, msg)) => self.error(&mut http, &cinfo, &route, *code, &path, &path, &msg.replace("%TYPE%", failed.0).replace("%MSG%", failed.1), "").await?,
-                        Some(PrereqFail::Redirect(url, msg)) => {
-                            http.set_status(307, "Temporary Redirect".to_owned());
-                            http.set_header("Location", url.into());
-                            http.close(msg.replace("%TYPE%", failed.0).replace("%MSG%", failed.1).as_bytes()).await?;
-                        },
-                        Some(PrereqFail::File(code, path)) => {
-                            http.set_status(*code, "Foo".to_owned());
-                            self.file_handler(&mut http, &cinfo, &route, path, &fin_path, &fin_path).await?;
-                        }
-                    }
-
-                    hasfailed = true;
-                    break
-                }
-                
-                if !hasfailed {
-                    log_with_level!(false, &self.settings.logging.prereq_passed, "passed prereqs");
-                }
+        else if let Some(router) = route.router.as_deref() { 
+            let router = Path::new(&self.settings.content.serve_dir).join(&route.directory).join(router);
+            if !router.exists() {
+                self.error(http, &cinfo, &route, 404, &path, &router, "router doesnt exist", "detail").await?;
             }
-
-            if !hasfailed {
-                if let Some(router) = route.router.as_deref() { 
-                    let router = Path::new(&self.settings.content.serve_dir).join(&route.directory).join(router);
-                    if !router.exists() {
-                        self.error(&mut http, &cinfo, &route, 404, &path, &router, "router doesnt exist", "detail").await?;
-                    }
-                    else if !router.is_file() {
-                        self.error(&mut http, &cinfo, &route, 501, &path, &router, "router is not a file", "detail").await?;
-                    }
-                    else {
-                        self.file_handler(&mut http, &cinfo, &route, &path, &router, &fin_path).await?;
-                    }
-                } else {
-                    self.dir_or_file(&mut http, &cinfo, &route, &path, &fin_path, &fin_path).await?;
-                };
+            else if !router.is_file() {
+                self.error(http, &cinfo, &route, 501, &path, &router, "router is not a file", "detail").await?;
             }
-        }
+            else {
+                self.file_handler(http, &cinfo, &route, &path, &router, &fin_path).await?;
+            }
+        } else {
+            self.dir_or_file(http, &cinfo, &route, &path, &fin_path, &fin_path).await?;
+        };
+        
 
         Ok(())
     }
@@ -424,8 +409,8 @@ impl SamicppHandler {
         Self { 
             args, 
             settings, 
-            routes_modified: RwLock::new(SystemTime::UNIX_EPOCH),
-            routes: RwLock::new(HashMap::new()),
+            routes_modified: AtomicArc::new(SystemTime::UNIX_EPOCH),
+            routes: AtomicArc::new(HashMap::new()),
             routes_cache: DashMap::new(),
             routes_path,
             ffi_modules: DashMap::new(),
@@ -436,7 +421,7 @@ impl SamicppHandler {
         // let routes = Path::new(&self.settings.content.serve_dir).join(self.args.routes.as_deref().or(self.settings.content.routes_name.as_deref()).unwrap_or("routes.json"));
         if let Ok(meta) = tokio::fs::metadata(&self.routes_path).await {
             let modified = meta.modified().map_err(AorB::A)?;
-            if *self.routes_modified.read().unwrap() < modified {
+            if *self.routes_modified.load().unwrap() < modified {
                 let file = tokio::fs::read(&self.routes_path).await.map_err(AorB::A)?;
 
                 
@@ -455,14 +440,14 @@ impl SamicppHandler {
                 }
 
 
-                let mut omod: std::sync::RwLockWriteGuard<'_, SystemTime> = self.routes_modified.write().unwrap();
-                let mut omap = self.routes.write().unwrap();
+                // let mut omod = self.routes_modified.write().unwrap();
+                // let mut omap = self.routes.write().unwrap();
                 
                 self.routes_cache.clear();
                 if let Some(def) = nmap.get("default") { self.routes_cache.insert("default".into(), def.clone()); }
                 
-                *omod = modified;
-                *omap = nmap;
+                self.routes_modified.store(Some(Arc::new(modified)));
+                self.routes.store(Some(Arc::new(nmap)));
 
 
                 Ok(true)
@@ -476,7 +461,7 @@ impl SamicppHandler {
         }
     }
 
-    async fn error(&self, http: &mut DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, code: u16, path: &Path, target_path: &Path, reason: &str, detail: &str) -> LibResult<()> { 
+    async fn error(&self, mut http: DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, code: u16, path: &Path, target_path: &Path, reason: &str, detail: &str) -> LibResult<()> { 
         http.set_header("Content-Type", "text/plain".into());
 
         if self.settings.logging.http_error_detailed.unwrap_or(true) {
@@ -494,6 +479,7 @@ impl SamicppHandler {
                 }
                 else {
                     http.close(b"broken request").await?;
+                    http.flush().await?;
                 }
             }
             403 => {
@@ -506,6 +492,7 @@ impl SamicppHandler {
                 }
                 else { 
                     http.close(format!("forbidden").as_bytes()).await?; 
+                    http.flush().await?;
                 }
             }
             404 => {
@@ -518,6 +505,7 @@ impl SamicppHandler {
                 }
                 else { 
                     http.close(format!("couldnt find {path:?}").as_bytes()).await?; 
+                    http.flush().await?;
                 }
             }
             409 => {
@@ -530,6 +518,7 @@ impl SamicppHandler {
                 }
                 else {
                     http.close(format!("something went wrong. {reason}").as_bytes()).await?;
+                    http.flush().await?;
                 }
             }
             416 => {
@@ -542,6 +531,7 @@ impl SamicppHandler {
                 }
                 else {
                     http.close(format!("Range Not Satisfiable. {reason}").as_bytes()).await?;
+                    http.flush().await?;
                 }
             }
 
@@ -556,6 +546,7 @@ impl SamicppHandler {
                 }
                 else {
                     http.close(format!("something went wrong\r\n{reason}").as_bytes()).await?;
+                    http.flush().await?;
                 }
             }
             501 => {
@@ -568,6 +559,7 @@ impl SamicppHandler {
                 }
                 else {
                     http.close(b"not implemented").await?;
+                    http.flush().await?;
                 }
             }
 
@@ -575,6 +567,7 @@ impl SamicppHandler {
                 log_with_level!(true, self.settings.logging.http_error, "{code} {reason}");
                 http.set_status(code, "Error".into());
                 http.close(format!("{reason} {detail}").as_bytes()).await?;
+                http.flush().await?;
             }
         }
 
@@ -582,7 +575,7 @@ impl SamicppHandler {
     }
 
     #[inline]
-    async fn dir_or_file(&self, http: &mut DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> {
+    async fn dir_or_file(&self, http: DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> {
         if file_path.is_file() {
             self.file_handler(http, cinfo, conf, path, file_path, real_path).await
         }
@@ -596,7 +589,7 @@ impl SamicppHandler {
             self.error(http, cinfo, conf, 501, path, file_path, "reason", "detail").await
         }
     }
-    async fn dir_handler(&self, http: &mut DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> { 
+    async fn dir_handler(&self, http: DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> { 
         let name = file_path.file_name().map(|s| s.to_string_lossy()).unwrap_or("index".into());
 
         if tokio::fs::try_exists(file_path.join(".muon_dont_serve")).await? {
@@ -626,7 +619,7 @@ impl SamicppHandler {
             }
         }
     }
-    async fn file_handler(&self, http: &mut DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> { 
+    async fn file_handler(&self, mut http: DynHttpSocket, cinfo: &ClientInfo, conf: &RouteConfig, path: &Path, file_path: &Path, real_path: &Path) -> LibResult<()> { 
         let meta = tokio::fs::metadata(file_path).await?;
         let name = file_path.file_name().map(|s| s.to_string_lossy()).unwrap_or("".into());
         let dots: Vec<&str> = name.split(".").collect();
@@ -645,6 +638,7 @@ impl SamicppHandler {
         else if name.ends_with(".blank") {
             http.set_status(204, "No Content".into());
             http.close(b"").await?;
+            http.flush().await?;
             log_with_level!(true, self.settings.logging.response, "204 No Content");
         }
         else if conf.dyn_files && (name.contains(".var.") || name.ends_with(".redirect") || name.ends_with(".link")) {
@@ -701,6 +695,7 @@ impl SamicppHandler {
 
             if name.contains(".var.") {
                 http.close(content.as_bytes()).await?;
+                http.flush().await?;
                 log_with_level!(true, self.settings.logging.response, "{:?} 200", file_path);
             } 
             else if name.ends_with(".redirect") {
@@ -718,6 +713,7 @@ impl SamicppHandler {
                 http.set_status(code, "Found".to_owned());
                 http.set_header("Location", location.trim().into());
                 http.close(b"").await?;
+                http.flush().await?;
                 log_with_level!(true, self.settings.logging.response, "'{}' 302 Found", location);
             }
             else if name.ends_with(".link") {
@@ -743,7 +739,7 @@ impl SamicppHandler {
                                 None 
                             })
                 {
-                    handle((&mut *fut) as *mut _, http as *mut _);
+                    handle((&mut *fut) as *mut _, Box::into_raw(Box::new(http)));
                 }
                 else {
                     let lib = libloading::Library::new(file_path).map_err(|_| LibError::Io(std::io::Error::new(std::io::ErrorKind::Other, "couldnt open library")))?;
@@ -755,7 +751,7 @@ impl SamicppHandler {
                     self.ffi_modules.insert(file_path.to_owned(), FfiModule { lib, mtime: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), handle });
 
                     init();
-                    handle((&mut *fut) as *mut _, http as *mut _);
+                    handle((&mut *fut) as *mut _, Box::into_raw(Box::new(http)));
                 }
             }
 
@@ -792,7 +788,7 @@ impl SamicppHandler {
                 });
                 
                 while let Some((id, name, value)) = rx.recv().await {
-                    if id == 0 { http.close(&name.into_bytes()).await? }
+                    if id == 0 { http.close(&name.into_bytes()).await?; http.flush().await?; }
                     else if id == 1 { http.write(&name.into_bytes()).await? }
                     else if id == 2 { http.set_header(&name, value); }
                     else if id == 3 { http.add_header(&name, value); }
@@ -908,6 +904,7 @@ impl SamicppHandler {
                         let mut out = vec![0u8; len as usize];
                         file.read_exact(&mut out).await?;
                         http.close(&out).await?;
+                        http.flush().await?;
                     }
                     else {
                         let mut chunk = vec![0u8; self.settings.content.file_chunk_size];
@@ -921,10 +918,12 @@ impl SamicppHandler {
                         
                         if count == 0 {
                             http.close(b"").await?;
+                            http.flush().await?;
                         } else {
                             let mut fin = vec![0u8; remain as usize];
                             file.read_exact(&mut fin).await?;
                             http.close(&fin).await?;
+                            http.flush().await?;
                         }
                     }
 
@@ -938,47 +937,51 @@ impl SamicppHandler {
                 http.set_header("Content-Type", format!("multipart/byteranges; boundary={boundary}"));
 
                 let mut errored = false;
-                for range in ranges {
+                for range in &ranges {
                     if range.start > range.end || range.start > meta.len() || range.end > meta.len() {
                         errored = true;
-                        self.error(http, cinfo, conf, 416, path, file_path, "invalid range", "detail").await?;
                         break;
                     }
-                    
-                    let start = range.start;
-                    let end = range.end;
-                    let len = range.end - range.start;
-
-                    file.seek(std::io::SeekFrom::Start(range.start)).await?;
-                    http.write(format!("--{boundary}\r\nContent-Type: {mime}\r\nContent-Range: bytes {start}-{end}/{}\r\n\r\n", meta.len()).as_bytes()).await?;
-
-                    if len < self.settings.content.max_file_read_size as u64 {
-                        let mut out = vec![0u8; len as usize];
-                        file.read_exact(&mut out).await?;
-                        http.write(&out).await?;
-                    }
-                    else {
-                        let mut chunk = vec![0u8; self.settings.content.file_chunk_size];
-                        let count = len / self.settings.content.file_chunk_size as u64;
-                        let remain = len % self.settings.content.file_chunk_size as u64;
-                        
-                        for _ in 0..count {
-                            file.read_exact(&mut chunk).await?;
-                            http.write(&chunk).await?;
-                        }
-                        
-                        if count != 0 {
-                            let mut fin = vec![0u8; remain as usize];
-                            file.read_exact(&mut fin).await?;
-                            http.write(&fin).await?;
-                        }
-                    }
-
-                    http.write(b"\r\n").await?;
                 }
+                if errored {
+                    self.error(http, cinfo, conf, 416, path, file_path, "invalid range", "detail").await?;
+                }
+                else {
+                    for range in ranges {
+                        let start = range.start;
+                        let end = range.end;
+                        let len = range.end - range.start;
 
-                if !errored {
+                        file.seek(std::io::SeekFrom::Start(range.start)).await?;
+                        http.write(format!("--{boundary}\r\nContent-Type: {mime}\r\nContent-Range: bytes {start}-{end}/{}\r\n\r\n", meta.len()).as_bytes()).await?;
+
+                        if len < self.settings.content.max_file_read_size as u64 {
+                            let mut out = vec![0u8; len as usize];
+                            file.read_exact(&mut out).await?;
+                            http.write(&out).await?;
+                        }
+                        else {
+                            let mut chunk = vec![0u8; self.settings.content.file_chunk_size];
+                            let count = len / self.settings.content.file_chunk_size as u64;
+                            let remain = len % self.settings.content.file_chunk_size as u64;
+                            
+                            for _ in 0..count {
+                                file.read_exact(&mut chunk).await?;
+                                http.write(&chunk).await?;
+                            }
+                            
+                            if count != 0 {
+                                let mut fin = vec![0u8; remain as usize];
+                                file.read_exact(&mut fin).await?;
+                                http.write(&fin).await?;
+                            }
+                        }
+
+                        http.write(b"\r\n").await?;
+                    }
+
                     http.close(format!("--{boundary}--\r\n").as_bytes()).await?;
+                    http.flush().await?;
 
                     log_with_level!(true, self.settings.logging.response, "{:?} 200", file_path);
                 }
@@ -987,6 +990,7 @@ impl SamicppHandler {
                 let mut out = vec![0u8; meta.len() as usize];
                 file.read_exact(&mut out).await?;
                 http.close(&out).await?;
+                http.flush().await?;
                 
                 log_with_level!(true, self.settings.logging.response, "{:?} 200", file_path);
             }
@@ -1003,10 +1007,12 @@ impl SamicppHandler {
                 
                 if count == 0 {
                     http.close(b"").await?;
+                    http.flush().await?;
                 } else {
                     let mut fin = vec![0u8; remain as usize];
                     file.read_exact(&mut fin).await?;
                     http.close(&fin).await?;
+                    http.flush().await?;
                 }
 
                 log_with_level!(true, self.settings.logging.response, "{:?} 200", file_path);

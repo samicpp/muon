@@ -57,7 +57,7 @@ pub struct Binding {
     pub reuse_port: Option<bool>,
     pub nodelay: Option<bool>,
     pub keepalive: Option<bool>,
-    #[serde(default = "def_true")] 
+    #[serde(default = "def_false")] 
     pub zero_linger: bool,
     // pub dualstack: Option<bool>,
     pub recv_bufsize: Option<u32>,
@@ -87,7 +87,7 @@ pub struct NetworkSettings {
     pub reuse_port: Option<bool>,
     pub nodelay: Option<bool>,
     pub keepalive: Option<bool>,
-    #[serde(default = "def_true")] 
+    #[serde(default = "def_false")] 
     pub zero_linger: bool,
     pub recv_bufsize: Option<u32>,
     pub send_bufsize: Option<u32>,

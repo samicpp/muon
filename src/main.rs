@@ -10,7 +10,7 @@ mod console;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use clap::Parser;
-use photon::{extra::PolyHttpSocket, ffihttp::DynStream, httprs_core::ffi::own::RT};
+use photon::{extra::PolyHttpSocket, ffihttp::DynStream, httprs_core::runtime::RT};
 use tokio::io::{ReadHalf, WriteHalf};
 // use owo_colors::OwoColorize;
 
@@ -292,7 +292,7 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxRx) -> Option<tok
 
         match rt.build() {
             Ok(rt) => {
-                RT.set(rt).unwrap();
+                RT.set(rt);
                 RT.spawn(start_servers(args, settings, txrx))
             },
             Err(err) => {
@@ -310,7 +310,7 @@ fn process(args: Arc<Cli>, settings: Arc<Settings>, txrx: ConTxRx) -> Option<tok
 
         match rt.build() {
             Ok(rt) => {
-                RT.set(rt).unwrap();
+                RT.set(rt);
                 RT.spawn(start_servers(args, settings, txrx))
             },
             Err(err) => {
