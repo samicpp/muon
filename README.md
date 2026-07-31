@@ -43,6 +43,7 @@ or fork the repo and open a pull request. <br/>
 - [x] graceful shutdown with ctrl+c
 - [x] allow reloading settings file
 - [x] allow setting console to listen over tcp
+- [ ] change console to be a more fitting http endpoint
 - [ ] allow console to use rhai for scripting
 - [ ] advanced socket options with socket2
 - [ ] store logging information about requests and more

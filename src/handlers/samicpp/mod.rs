@@ -1,10 +1,10 @@
-use std::{collections::HashMap, format, ops::Range, path::{Path, PathBuf}, ptr, sync::Arc, time::SystemTime};
+use std::{format, ops::Range, path::{Path, PathBuf}, ptr, sync::Arc, time::SystemTime};
 
 use dashmap::DashMap;
 use libloading::Library;
 use photon::{httprs_core::{atomic_arc::AtomicArc, futures::FfiFuture}, shared::{HttpClient, HttpMethod, HttpSocket, HttpVersion, LibError, LibResult}};
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, de::{Visitor, Deserializer}};
 use tokio::{fs::File, io::{AsyncReadExt, AsyncSeekExt}};
 use base64::{Engine, engine::general_purpose::STANDARD as b64std};
 
@@ -19,6 +19,7 @@ pub mod deno_scripting;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct RouteConfig {
+    // pub label: String,
     pub match_type: MatchType,
 
     #[serde(skip)]
@@ -57,7 +58,7 @@ pub struct RouteConfig {
 impl Default for RouteConfig {
     fn default() -> Self {
         Self { 
-            match_type: MatchType::Host, 
+            match_type: MatchType::None, 
 
             regex: None,
 
@@ -73,9 +74,9 @@ impl Default for RouteConfig {
             forbid_start: None, 
             forbid_regex: None,
 
-            ffi_modules: true,
+            ffi_modules: false,
             rhai_scripts: false,
-            dyn_files: true,
+            dyn_files: false,
 
             e400_file: None, 
             e403_file: None, 
@@ -87,11 +88,52 @@ impl Default for RouteConfig {
         }
     }
 }
+
+pub struct RoutesVisitor;
+impl<'de> Visitor<'de> for RoutesVisitor {
+    type Value = (Option<Arc<RouteConfig>>, Vec<(String, Arc<RouteConfig>)>);
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("data")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        let mut arr = Vec::with_capacity(map.size_hint().unwrap_or(0));
+        let mut default = None;
+
+        while let Some((k, mut v)) = map.next_entry::<String, RouteConfig>()? {
+            if v.match_type == MatchType::Regex {
+                v.regex = Regex::new(&k).ok();
+            }
+            if let Some(pat) = &v.forbid {
+                v.forbid_regex = Regex::new(pat).ok();
+            }
+            
+            let arc = Arc::new(v);
+            
+            if default.is_none() && arc.match_type == MatchType::Default {
+                default = Some(arc)
+            }
+            else if arc.match_type == MatchType::None { }
+            else {
+                arr.push((k, arc));
+            }
+        }
+
+        Ok((default, arr))
+    }
+}
+
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "kebab-case")]
 pub enum MatchType {
     Always,
     Default,
+    None,
+
     Host,
     Start,
     End,
@@ -101,6 +143,7 @@ pub enum MatchType {
     Protocol,
     Type,
     Domain,
+    FullhostStart,
 }
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 #[serde(rename_all = "kebab-case")]
@@ -142,9 +185,10 @@ pub struct SamicppHandler {
     pub settings: Arc<Settings>,
 
     pub routes_modified: AtomicArc<SystemTime>,
-    pub routes: AtomicArc<HashMap<String, Arc<RouteConfig>>>,
+    pub routes: AtomicArc<Vec<(String, Arc<RouteConfig>)>>,
     pub routes_cache: DashMap<String, Arc<RouteConfig>>,
     pub routes_path: PathBuf,
+    pub routes_default: AtomicArc<RouteConfig>,
 
     pub ffi_modules: DashMap<PathBuf, FfiModule>,
 }
@@ -250,12 +294,7 @@ impl HttpHandler for SamicppHandler {
         }
 
         let mut route = None;
-        let default = 
-        if let Some(def) = self.routes_cache.get("default") { def.clone() }
-        else {
-            elog_with_level!(true, self.settings.logging.routes_warning, "no default entry in routes");
-            Arc::new(RouteConfig::default())
-        };
+        let default = self.routes_default.load().unwrap();
         if let Some(conf) = self.routes_cache.get(&pfullhost) {
             route = Some(conf.clone());
         }
@@ -265,17 +304,19 @@ impl HttpHandler for SamicppHandler {
                 let label = label.as_str();
                 if 
                     match opt.match_type {
-                        MatchType::Always    => true,
-                        MatchType::Default   => false,
-                        MatchType::Host      => host.eq_ignore_ascii_case(label),
-                        MatchType::Start     => starts_with_case_insensitive(&fullhost, label),
-                        MatchType::End       => ends_with_case_insensitive(&fullhost, label),
-                        MatchType::Regex     => opt.regex.as_ref().map(|r: &Regex| r.is_match(&fullhost)).unwrap_or(false),
-                        MatchType::PathStart => starts_with_case_insensitive(&path_str, &label[1..]),
-                        MatchType::Scheme    => cinfo.is_secure && label.eq_ignore_ascii_case("https") || !cinfo.is_secure && label.eq_ignore_ascii_case("http"),
-                        MatchType::Protocol  => http.get_client().version.to_string().eq_ignore_ascii_case(label),
-                        MatchType::Type      => http.get_type().to_string().eq_ignore_ascii_case(label),
-                        MatchType::Domain    => domain.eq_ignore_ascii_case(label),
+                        MatchType::Always        => true,
+                        MatchType::Default       => false,
+                        MatchType::None          => false,
+                        MatchType::Host          => host.eq_ignore_ascii_case(label),
+                        MatchType::Start         => starts_with_case_insensitive(&fullhost, label),
+                        MatchType::End           => ends_with_case_insensitive(&fullhost, label),
+                        MatchType::Regex         => opt.regex.as_ref().map(|r: &Regex| r.is_match(&fullhost)).unwrap_or(false),
+                        MatchType::PathStart     => starts_with_case_insensitive(&path_str, &label[1..]),
+                        MatchType::Scheme        => cinfo.is_secure && label.eq_ignore_ascii_case("https") || !cinfo.is_secure && label.eq_ignore_ascii_case("http"),
+                        MatchType::Protocol      => http.get_client().version.to_string().eq_ignore_ascii_case(label),
+                        MatchType::Type          => http.get_type().to_string().eq_ignore_ascii_case(label),
+                        MatchType::Domain        => domain.eq_ignore_ascii_case(label),
+                        MatchType::FullhostStart => starts_with_case_insensitive(&fullhost, label),
                         // _                    => false,
                     }
                 {
@@ -410,9 +451,10 @@ impl SamicppHandler {
             args, 
             settings, 
             routes_modified: AtomicArc::new(SystemTime::UNIX_EPOCH),
-            routes: AtomicArc::new(HashMap::new()),
+            routes: AtomicArc::new(Vec::new()),
             routes_cache: DashMap::new(),
             routes_path,
+            routes_default: AtomicArc::new(RouteConfig::default()),
             ffi_modules: DashMap::new(),
         }
     }
@@ -425,30 +467,15 @@ impl SamicppHandler {
                 let file = tokio::fs::read(&self.routes_path).await.map_err(AorB::A)?;
 
                 
-                let map: HashMap<String, RouteConfig> = serde_json::de::from_slice(&file).map_err(AorB::B)?;
-                #[cfg(debug_assertions)] dbg!(&map);
+                let mut deser = serde_json::Deserializer::from_slice(&file);
+                let (default, nmap) = deser.deserialize_map(RoutesVisitor).map_err(AorB::B)?;
+                #[cfg(debug_assertions)] dbg!(&nmap);
 
-                let mut nmap = HashMap::new();
-                for (k, mut v) in map {
-                    if v.match_type == MatchType::Regex {
-                        v.regex = Regex::new(&k).ok();
-                    }
-                    if let Some(pat) = &v.forbid {
-                        v.forbid_regex = Regex::new(pat).ok();
-                    }
-                    nmap.insert(k, Arc::new(v));
-                }
-
-
-                // let mut omod = self.routes_modified.write().unwrap();
-                // let mut omap = self.routes.write().unwrap();
-                
                 self.routes_cache.clear();
-                if let Some(def) = nmap.get("default") { self.routes_cache.insert("default".into(), def.clone()); }
+                if let Some(def) = default { self.routes_default.store(Some(def)); }
                 
                 self.routes_modified.store(Some(Arc::new(modified)));
                 self.routes.store(Some(Arc::new(nmap)));
-
 
                 Ok(true)
             }
